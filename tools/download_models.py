@@ -6,6 +6,7 @@ ROOT = Path(__file__).resolve().parents[1]
 os.environ['HF_HOME'] = str(ROOT / 'models/huggingface')
 os.environ.pop('HF_HUB_OFFLINE', None)
 os.environ['HF_HUB_DISABLE_TELEMETRY'] = '1'
+os.environ['HF_HUB_DISABLE_SYMLINKS_WARNING'] = '1'
 os.environ['HF_HUB_DISABLE_XET'] = '1'
 os.environ['HF_HUB_DOWNLOAD_TIMEOUT'] = '300'
 PATTERNS = {
