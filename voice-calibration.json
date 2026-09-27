@@ -1,0 +1,158 @@
+{
+  "date": "2026-09-27",
+  "sdk": "3.8.3",
+  "target_lufs": -20,
+  "method": "FFmpeg loudnorm measurement on the fixed story, after tempo/gap at volume 100%. Static suggested gain; real chapters can differ. No claim of subjective optimality.",
+  "voices": [
+    {
+      "voice": "Thiện Minh",
+      "lufs": -19.73,
+      "peak_db": -2.81,
+      "relative_volume": 97
+    },
+    {
+      "voice": "Thiền Tâm Đức",
+      "lufs": -19.05,
+      "peak_db": -1.69,
+      "relative_volume": 90
+    },
+    {
+      "voice": "Thái Sơn",
+      "lufs": -20.29,
+      "peak_db": -2.73,
+      "relative_volume": 103
+    },
+    {
+      "voice": "Thanh Bình",
+      "lufs": -20.14,
+      "peak_db": -2.74,
+      "relative_volume": 102
+    },
+    {
+      "voice": "Ngọc Linh",
+      "lufs": -19.64,
+      "peak_db": -5.61,
+      "relative_volume": 96
+    },
+    {
+      "voice": "Thục Đoan",
+      "lufs": -20.43,
+      "peak_db": -3.68,
+      "relative_volume": 105
+    },
+    {
+      "voice": "Mỹ Duyên",
+      "lufs": -19.11,
+      "peak_db": -2.34,
+      "relative_volume": 90
+    },
+    {
+      "voice": "Quỳnh Anh",
+      "lufs": -19.9,
+      "peak_db": -3.82,
+      "relative_volume": 99
+    },
+    {
+      "voice": "Đức Trí",
+      "lufs": -19.56,
+      "peak_db": -3.24,
+      "relative_volume": 95
+    },
+    {
+      "voice": "Kim Thanh",
+      "lufs": -20.27,
+      "peak_db": -4.0,
+      "relative_volume": 103
+    },
+    {
+      "voice": "Adam bựa",
+      "lufs": -19.39,
+      "peak_db": -3.48,
+      "relative_volume": 93
+    },
+    {
+      "voice": "Trúc Ly",
+      "lufs": -19.3,
+      "peak_db": -2.15,
+      "relative_volume": 92
+    },
+    {
+      "voice": "Mai Anh",
+      "lufs": -20.33,
+      "peak_db": -4.2,
+      "relative_volume": 104
+    },
+    {
+      "voice": "Hải Đăng",
+      "lufs": -19.69,
+      "peak_db": -1.85,
+      "relative_volume": 96
+    },
+    {
+      "voice": "Thùy Dung",
+      "lufs": -19.83,
+      "peak_db": -1.6,
+      "relative_volume": 98
+    },
+    {
+      "voice": "Ngọc Huyền",
+      "lufs": -19.5,
+      "peak_db": -2.7,
+      "relative_volume": 94
+    },
+    {
+      "voice": "Quang Sơn",
+      "lufs": -20.04,
+      "peak_db": -0.34,
+      "relative_volume": 100
+    },
+    {
+      "voice": "Ngọc Trân",
+      "lufs": -19.84,
+      "peak_db": -6.1,
+      "relative_volume": 98
+    },
+    {
+      "voice": "Minh Đức",
+      "lufs": -20.63,
+      "peak_db": -5.95,
+      "relative_volume": 108
+    },
+    {
+      "voice": "Phạm Tuyên",
+      "lufs": -19.94,
+      "peak_db": -0.84,
+      "relative_volume": 99
+    },
+    {
+      "voice": "Xuân Vĩnh",
+      "lufs": -19.81,
+      "peak_db": -2.12,
+      "relative_volume": 98
+    },
+    {
+      "voice": "Đoan Trang",
+      "lufs": -20.28,
+      "peak_db": -5.46,
+      "relative_volume": 103
+    },
+    {
+      "voice": "Minh Triết",
+      "lufs": -19.87,
+      "peak_db": -0.89,
+      "relative_volume": 99
+    },
+    {
+      "voice": "Adam",
+      "lufs": -20.01,
+      "peak_db": -1.02,
+      "relative_volume": 100
+    },
+    {
+      "voice": "Quốc Tuấn",
+      "lufs": -20.39,
+      "peak_db": -2.56,
+      "relative_volume": 105
+    }
+  ]
+}

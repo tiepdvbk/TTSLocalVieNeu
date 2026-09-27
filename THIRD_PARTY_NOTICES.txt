@@ -1,0 +1,37 @@
+VieNeu TTS Studio - local desktop application
+
+VieNeu-TTS 3.8.3 by Pham Nguyen Ngoc Bao
+https://github.com/pnnbao97/VieNeu-TTS
+Apache-2.0. Original source and LICENSE: vendor/VieNeu-TTS.
+Exact source revision: vendor-revision.txt.
+Model: https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo
+Codec: https://huggingface.co/OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano-ONNX
+Model cards are included in models/huggingface/hub/.../snapshots/.../README.md.
+
+PySide6 / Qt for Python - LGPL-3.0 / GPL / commercial options.
+https://www.qt.io/licensing/open-source-lgpl-obligations
+Dynamic libraries are included in _internal/PySide6 and can be replaced by compatible builds.
+https://code.qt.io/cgit/pyside/pyside-setup.git
+
+ONNX Runtime (MIT): https://github.com/microsoft/onnxruntime
+NumPy (BSD): https://numpy.org
+sea-g2p: https://pypi.org/project/sea-g2p/
+SoundFile / libsndfile: https://github.com/bastibe/python-soundfile
+FFmpeg: tools/ffmpeg.exe. Existing local distributions may use the Gyan full build.
+Fresh source setup uses the FFmpeg binary from imageio-ffmpeg 0.6.0 (PyPI).
+https://github.com/imageio/imageio-ffmpeg ; bundled FFmpeg licenses: imageio_ffmpeg/binaries.
+FFmpeg license/configuration saved in licenses/ffmpeg-version.txt.
+Source: https://ffmpeg.org/download.html and https://www.gyan.dev/ffmpeg/builds/
+
+Package versions: requirements-lock.txt. Distribution metadata licenses in licenses/.
+CPU mode does not require PyTorch, CUDA, Gradio or cloud TTS.
+
+Version 2 GPU mode uses a separate .gpu virtual environment:
+PyTorch 2.8.0+cu126 (BSD-style license; CUDA components have NVIDIA licenses)
+https://pytorch.org and https://github.com/pytorch/pytorch/blob/v2.8.0/LICENSE
+Transformers 4.57.6 (Apache-2.0), Safetensors, and OpenMOSS PyTorch codec.
+Exact GPU dependency versions: requirements-gpu-lock.txt.
+Runtime licenses are included by the installed distributions under .gpu/Lib/site-packages.
+
+Build bootstrap: uv (Astral, MIT/Apache-2.0), Python build standalone,
+PowerShell 7 (Microsoft, MIT). These are downloaded locally into .tools.
