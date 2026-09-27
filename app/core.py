@@ -29,7 +29,10 @@ DEFAULTS = dict(voice='', threads=4, chunk_size=220, speed=1.0, volume=100,
                 gap=0.25, format='wav', output_dir=str(ROOT / 'output'), same_folder=False,
                 recursive=True, preserve_tree=True, cleanup=False, temperature=0.8,
                 top_k=25, top_p=0.95, repetition_penalty=1.2, retries=2, theme='dark',
-                accel_mode='auto', gpu_batch=2, voice_profile=True, auto_preview=True)
+                accel_mode='auto', gpu_batch=2, voice_profile=True, auto_preview=True,
+                pitch=0., normalize_volume=False, trim_silence=False, use_ref_codes=True,
+                pause_custom=False, pause_comma=.18, pause_sentence=.4, pause_newline=.7,
+                export_srt=False, srt_mode='continuous', srt_max_speed=2.)
 
 def digest(path):
     h = hashlib.sha256()
@@ -94,6 +97,8 @@ def voices():
     from .voice_profiles import NARRATORS
     items = [(key, value.get('description', '')) for key, value in obj['presets'].items()]
     items.sort(key=lambda item: NARRATORS.index(item[0]) if item[0] in NARRATORS else len(NARRATORS))
+    from .voice_library import entries
+    items.extend((key, 'Giọng cá nhân • '+name) for key,name in entries())
     return items, 'Thiện Minh' if 'Thiện Minh' in obj['presets'] else obj.get('default_voice', '')
 
 class Store:
@@ -154,8 +159,17 @@ class Store:
         with self.connect() as db:
             db.execute('UPDATE jobs SET status=?,error=?,updated=? WHERE id=?', (status, error, time.time(), jid))
 
-    def add(self, text, name, settings, source=None, relative=None):
-        pieces = split_text(text, settings['chunk_size'])
+    def add(self, text, name, settings, source=None, relative=None, is_srt=False):
+        from .speech_plan import make_plan
+        settings=DEFAULTS | settings.copy()
+        settings.pop('voice_data',None)
+        if settings['voice'].startswith('clone:'):
+            from .voice_library import load_voice
+            settings['voice_data']=load_voice(settings['voice'])
+        plan,cues=make_plan(text,settings, is_srt or bool(source and Path(source).suffix.lower()=='.srt'))
+        pieces=[p['text'] for p in plan]
+        settings['_plan']=[{k:v for k,v in p.items() if k!='text'} for p in plan]
+        settings['_srt_cues']=cues
         if not pieces:
             raise ValueError('Nội dung rỗng.')
         jid = uuid.uuid4().hex
@@ -208,7 +222,11 @@ class Engine:
 
     def synthesize(self, text, settings):
         self.load(settings['threads'])
-        return self.tts.infer(text, voice=settings['voice'] or None,
+        from tools.runtime_support import voice_argument
+        if settings['voice'].startswith('clone:') and not settings.get('voice_data'):
+            from .voice_library import load_voice
+            settings=settings | dict(voice_data=load_voice(settings['voice']))
+        return self.tts.infer(text, voice=voice_argument(settings),use_ref_codes=settings.get('use_ref_codes',True),
             max_chars=settings['chunk_size'], temperature=settings['temperature'],
             top_k=settings['top_k'], top_p=settings['top_p'],
             repetition_penalty=settings['repetition_penalty'], apply_watermark=False, batch_size=1)
@@ -233,8 +251,17 @@ def render_audio(raw, target, settings):
     """Identical tempo, volume and peak protection for previews and exports."""
     s = settings
     ffmpeg = ROOT / 'tools/ffmpeg.exe'
+    pitch=2**(s.get('pitch',0)/12)
+    tempo=s['speed']/pitch
+    filters=[]
+    if pitch!=1: filters.extend([f'asetrate={48000*pitch}', 'aresample=48000'])
+    while tempo>2: filters.append('atempo=2'); tempo/=2
+    while tempo<.5: filters.append('atempo=0.5'); tempo/=.5
+    filters.append(f'atempo={tempo}')
+    if s.get('normalize_volume'): filters.append('loudnorm=I=-20:TP=-1:LRA=11')
+    filters.extend([f'volume={s["volume"]/100}', 'alimiter=limit=0.98:level=false'])
     args = [str(ffmpeg), '-hide_banner', '-loglevel', 'error', '-nostdin', '-y', '-i', str(raw),
-            '-af', f'atempo={s["speed"]},volume={s["volume"]/100},alimiter=limit=0.98:level=false', '-ar', '48000']
+            '-af', ','.join(filters), '-ar', '48000']
     codecs = {'wav': ['-c:a', 'pcm_s16le'], 'mp3': ['-c:a', 'libmp3lame', '-b:a', '192k'],
               'flac': ['-c:a', 'flac'], 'm4a': ['-c:a', 'aac', '-b:a', '192k']}
     result = subprocess.run(args + codecs[Path(target).suffix[1:]] + [str(target)], capture_output=True,
@@ -249,46 +276,64 @@ def export_audio(store, jid, settings=None):
     import numpy as np
     import soundfile as sf
     job = store.job(jid)
-    s = settings or json.loads(job['settings'])
+    original_settings=json.loads(job['settings'])
+    s = original_settings | (settings or {})
+    # Segmentation and source cue timing always belong to the saved job.
+    for key in ('_plan','_srt_cues'):
+        if key in original_settings: s[key]=original_settings[key]
     chunks = store.chunks(jid)
     if not chunks or any(c['status'] != 'DONE' or not valid_chunk(c) for c in chunks):
         raise ValueError('Cache thiếu hoặc hỏng; hãy chọn Tiếp tục / Thử lại để tạo lại đoạn thiếu.')
     cache = store.root / 'cache/jobs' / jid
     cache.mkdir(parents=True, exist_ok=True)
-    raw = cache / 'merged.wav'
-    with sf.SoundFile(str(raw), mode='w', samplerate=48000, channels=1, subtype='PCM_16', format='WAV') as dest:
-        for i, chunk in enumerate(chunks):
-            with sf.SoundFile(chunk['path']) as src:
-                for block in src.blocks(blocksize=65536, dtype='float32'):
-                    dest.write(block)
-            if i < len(chunks) - 1:
-                dest.write(np.zeros(round(48000 * s['gap']), dtype=np.float32))
+    from .audio_export import build_audio
+    from .speech_plan import format_srt
+    processed,captions=build_audio(chunks,s,cache,render_audio)
     target = Path(job['output'])
     if settings is not None:
         target = target.with_name(target.stem + '_export.' + s['format'])
     original = target
     n = 1
-    while target.exists():
+    while target.exists() or (s.get('export_srt') and target.with_suffix('.srt').exists()):
         target = original.with_name(f'{original.stem}_{n:03d}{original.suffix}')
         n += 1
     tmp = cache / ('final.tmp' + target.suffix)
-    render_audio(raw, tmp, s)
+    if target.suffix=='.wav':
+        tmp=processed
+    else:
+        codecs={'mp3':['libmp3lame','-b:a','192k'],'flac':['flac'],'m4a':['aac','-b:a','192k']}
+        result=subprocess.run([str(ROOT/'tools/ffmpeg.exe'),'-hide_banner','-loglevel','error','-nostdin','-y',
+            '-i',str(processed),'-c:a',*codecs[target.suffix[1:]],str(tmp)],capture_output=True,
+            creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+        if result.returncode: raise RuntimeError(result.stderr.decode('utf-8',errors='replace'))
     target.parent.mkdir(parents=True, exist_ok=True)
     # Write on the destination volume, then atomically publish. Windows rename
     # fails if another application creates the target in the meantime.
     staged = target.with_name(target.name + '.' + uuid.uuid4().hex + '.partial')
+    subtitle=target.with_suffix('.srt')
+    subtitle_created=False
     try:
         with open(staged, 'xb') as dest, open(tmp, 'rb') as src:
             shutil.copyfileobj(src, dest)
             dest.flush()
             os.fsync(dest.fileno())
+        if s.get('export_srt'):
+            # Exclusive create: never replace an input SRT or an existing sidecar.
+            with open(subtitle,'x',encoding='utf-8-sig') as handle:
+                subtitle_created=True
+                handle.write(format_srt(captions)); handle.flush(); os.fsync(handle.fileno())
         os.rename(staged, target)
     except FileExistsError:
+        if subtitle_created: subtitle.unlink(missing_ok=True)
         raise RuntimeError('Tên output vừa được chương trình khác tạo; thử xuất lại.')
+    except Exception:
+        if subtitle_created: subtitle.unlink(missing_ok=True)
+        raise
     finally:
         staged.unlink(missing_ok=True)
     tmp.unlink(missing_ok=True)
-    raw.unlink(missing_ok=True)
+    for name in ('merged.wav','processed.wav','cue.wav','cue-fit.wav'):
+        (cache/name).unlink(missing_ok=True)
     if settings is None:
         with store.connect() as db:
             db.execute('UPDATE jobs SET output=? WHERE id=?', (str(target), jid))

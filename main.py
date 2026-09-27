@@ -9,6 +9,10 @@ def main():
                                   maxBytes=5_000_000, backupCount=4, encoding='utf-8')
     logging.basicConfig(level=logging.INFO, handlers=[handler],
                         format='%(asctime)s %(levelname)s %(name)s %(message)s')
+    if '--features-test' in sys.argv:
+        from app.featuretest import run
+        run()
+        return
     if '--self-test' in sys.argv:
         from app.selftest import run
         run()

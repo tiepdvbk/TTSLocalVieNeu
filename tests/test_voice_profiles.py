@@ -8,7 +8,7 @@ from tests.test_core import FakeEngine
 
 
 def test_profiles_cover_presets_and_aliases():
-    assert set(PROFILES) == {name for name, _ in voices()[0]}
+    assert set(PROFILES) == {name for name, _ in voices()[0] if not name.startswith('clone:')}
     assert canonical_voice('Minh Quân') == 'Hải Đăng'
     assert canonical_voice('Anh Khôi') == 'Thiện Minh'
     assert profile_settings('Anh Khôi') == profile_settings('Thiện Minh')

@@ -18,7 +18,7 @@ protocol = sys.stdout
 sys.stdout = sys.stderr  # keep library messages out of the protocol
 import numpy as np
 import soundfile as sf
-from runtime_support import gpu_synth, instrument_gpu
+from runtime_support import gpu_synth, instrument_gpu, voice_argument
 if os.environ.get('TTS_PARENT_PID'):
     import threading
     import psutil
@@ -35,7 +35,7 @@ def reply(data):
     protocol.flush()
 
 def synth(tts, texts, s, device):
-    args = dict(voice=s['voice'] or None, max_chars=s['chunk_size'],
+    args = dict(voice=voice_argument(s), use_ref_codes=s.get('use_ref_codes',True), max_chars=s['chunk_size'],
                 temperature=s['temperature'], top_k=s['top_k'], top_p=s['top_p'],
                 repetition_penalty=s['repetition_penalty'], apply_watermark=False)
     if device == 'gpu':

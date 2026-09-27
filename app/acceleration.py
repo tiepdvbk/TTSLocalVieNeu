@@ -335,6 +335,20 @@ def create_preview(engine,voice,force=False):
         tmp.unlink(missing_ok=True)
     return path
 
+def create_tuned_preview(engine,settings):
+    import uuid
+    from .core import Store, Runner
+    folder=ROOT/'cache/previews'/uuid.uuid4().hex
+    store=Store(folder)
+    settings=settings | dict(accel_mode='cpu', output_dir=str(folder),same_folder=False,
+                             cleanup=True,export_srt=False)
+    jid=store.add(SAMPLE_TEXT,'Mau_tuy_chinh',settings)
+    Runner(store,engine).run([jid])
+    job=store.job(jid)
+    if job['status']!='DONE': raise RuntimeError(job['error'] or 'Không tạo được mẫu.')
+    return Path(job['output'])
+
+
 def benchmark(event=lambda *a:None,halted=lambda:False):
     import soundfile as sf
     info=hardware_info()

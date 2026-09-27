@@ -29,4 +29,5 @@ data/settings.json
 .publish/
 .fresh-test/
 data/benchmark.json
+data/voices/
 *.zip

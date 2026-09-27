@@ -6,6 +6,33 @@ from app import ui
 from app.core import Store, DEFAULTS
 from tests.test_core import FakeEngine
 
+
+def test_srt_and_voice_controls(tmp_path,monkeypatch):
+    app=QApplication.instance() or QApplication([])
+    monkeypatch.setattr(ui,'Store',lambda:Store(tmp_path))
+    monkeypatch.setattr(ui,'ROOT',tmp_path)
+    monkeypatch.setattr(ui,'load_config',lambda:DEFAULTS|dict(output_dir=str(tmp_path/'out'),auto_preview=False))
+    w=ui.Window()
+    try:
+        w.set_rhythm(2)
+        assert w.settings()['pause_custom'] and w.settings()['pause_newline']==.7
+        assert w.settings_widgets['pause_comma'].isEnabled()
+        w.set_rhythm(1)
+        assert not w.settings_widgets['pause_comma'].isEnabled()
+        w.settings_widgets['export_srt'].setChecked(True)
+        w.srt_mode.setCurrentIndex(w.srt_mode.findData('timeline'))
+        w.editor_srt.setChecked(True)
+        w.editor.setPlainText('1\n00:00:01,000 --> 00:00:02,000\nXin chào.')
+        w.name.setText('Subtitle')
+        w.add_text()
+        import json
+        settings=json.loads(w.store.jobs()[0]['settings'])
+        assert settings['_srt_cues'][0]['start']==1
+        assert settings['srt_mode']=='timeline' and settings['export_srt']
+        assert w.tabs.tabText(5)=='Clone giọng'
+    finally:
+        w.close()
+
 def test_add_run_history_and_persistence(tmp_path, monkeypatch):
     app = QApplication.instance() or QApplication([])
     monkeypatch.setattr(ui, 'Store', lambda: Store(tmp_path))

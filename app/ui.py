@@ -12,8 +12,9 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
     QHeaderView, QProgressBar, QTabWidget, QMessageBox, QScrollArea, QAbstractItemView,
     QSplitter)
 from .core import ROOT, Store, Runner, Engine, load_config, atomic_json, read_text, voices, export_audio
-from .acceleration import LABELS, hardware_info, recommendation, preview_path, create_preview, valid_preview, benchmark
+from .acceleration import LABELS, hardware_info, recommendation, preview_path, create_preview, valid_preview, benchmark, create_tuned_preview
 from .voice_profiles import canonical_voice, profile, profile_settings, NARRATORS
+from .voice_library import display_name, create_voice
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 import threading
 
@@ -44,10 +45,11 @@ class Worker(QThread):
 class TaskWorker(QThread):
     event = Signal(str,str)
     result = Signal(object)
-    def __init__(self,task,engine=None,voice_names=None,force=False):
+    def __init__(self,task,engine=None,voice_names=None,force=False,request=None):
         super().__init__()
         self.task,self.engine,self.names,self.force=task,engine,voice_names or [],force
         self.cancel=threading.Event()
+        self.request=request or {}
     def run(self):
         try:
             if self.task=='hardware':
@@ -56,6 +58,11 @@ class TaskWorker(QThread):
                 self.engine.close()
                 result=benchmark(lambda a,b:self.event.emit(a,b),self.cancel.is_set)
                 self.result.emit(result)
+            elif self.task=='clone':
+                self.event.emit('log','Đang tạo giọng cá nhân từ đoạn mẫu…')
+                self.result.emit(create_voice(self.engine,**self.request))
+            elif self.task=='tuned':
+                self.event.emit('tuned_preview',str(create_tuned_preview(self.engine,self.request)))
             else:
                 for i,voice in enumerate(self.names):
                     if self.cancel.is_set():
@@ -139,8 +146,10 @@ class Window(QMainWindow):
         self.name.setPlaceholderText('Tên bài đọc, ví dụ: Chương 01')
         inp.addWidget(self.name)
         self.editor = QPlainTextEdit()
-        self.editor.setPlaceholderText('Nhập hoặc dán nội dung tiếng Việt tại đây…\n\nBạn cũng có thể kéo file TXT hoặc thư mục vào cửa sổ.')
+        self.editor.setPlaceholderText('Nhập hoặc dán nội dung tiếng Việt tại đây…\n\nBạn cũng có thể kéo file TXT / SRT hoặc thư mục vào cửa sổ.')
         inp.addWidget(self.editor)
+        self.editor_srt=QCheckBox('Nội dung dán ở trên là SRT (có mốc thời gian)')
+        inp.addWidget(self.editor_srt)
         row = QHBoxLayout()
         self.count = QLabel('0 ký tự')
         self.editor.textChanged.connect(lambda: self.count.setText(f'{len(self.editor.toPlainText()):,} ký tự'))
@@ -149,7 +158,7 @@ class Window(QMainWindow):
         row.addWidget(button('Thêm bài vào hàng đợi', self.add_text, True))
         inp.addLayout(row)
         row = QHBoxLayout()
-        row.addWidget(button('+ Chọn file TXT', self.pick_files))
+        row.addWidget(button('+ Chọn TXT / SRT', self.pick_files))
         row.addWidget(button('+ Chọn thư mục', self.pick_folder))
         inp.addLayout(row)
         self.tabs.addTab(input_page, 'Soạn nội dung')
@@ -215,6 +224,26 @@ class Window(QMainWindow):
         row.addWidget(button('Mở thư mục mẫu',self.open_samples))
         spl.addLayout(row)
         self.tabs.addTab(sample_page,'Nghe thử giọng')
+        clone_page=QWidget()
+        clone_form=QFormLayout(clone_page)
+        clone_note=QLabel('Tạo giọng cá nhân offline từ một người nói rõ, ít nhạc nền. Mẫu 3–8 giây thường phù hợp; có thể chọn tối đa 8 giây. Không cần gõ lại lời mẫu. Chất giọng và ngữ điệu phụ thuộc đoạn thu.')
+        clone_note.setWordWrap(True)
+        clone_form.addRow(clone_note)
+        self.clone_name=QLineEdit(); self.clone_name.setPlaceholderText('Tên giọng của bạn')
+        self.clone_file=QLineEdit(); self.clone_file.setReadOnly(True)
+        clone_form.addRow('Tên giọng',self.clone_name)
+        clone_form.addRow('File mẫu',self.clone_file)
+        clone_form.addRow(button('Chọn audio mẫu…',self.pick_clone))
+        self.clone_start=QDoubleSpinBox(); self.clone_start.setRange(0,86400); self.clone_start.setSuffix(' s')
+        self.clone_length=QDoubleSpinBox(); self.clone_length.setRange(3,8); self.clone_length.setValue(8); self.clone_length.setSuffix(' s')
+        clone_form.addRow('Bắt đầu tại',self.clone_start)
+        clone_form.addRow('Lấy đoạn dài',self.clone_length)
+        self.clone_denoise=QCheckBox('Lọc nhiễu mẫu bằng model (chậm hơn)')
+        clone_form.addRow(self.clone_denoise)
+        self.clone_btn=button('Tạo và lưu giọng cá nhân',self.start_clone,True)
+        clone_form.addRow(self.clone_btn)
+        clone_form.addRow(QLabel('Giọng được lưu riêng trong data/voices và xuất hiện trong danh sách Giọng.'))
+        self.tabs.addTab(clone_page,'Clone giọng')
         self.progress_label = QLabel('Sẵn sàng • Thêm nội dung rồi nhấn Bắt đầu')
         l.addWidget(self.progress_label)
         self.file_progress = QProgressBar()
@@ -247,7 +276,7 @@ class Window(QMainWindow):
         self.voice = QComboBox()
         items, default = voices()
         for key, description in items:
-            self.voice.addItem(('★ ' if key in NARRATORS else '') + key, key)
+            self.voice.addItem(('★ ' if key in NARRATORS else 'Cá nhân • ' if key.startswith('clone:') else '') + display_name(key), key)
             self.voice.setItemData(self.voice.count()-1, description, Qt.ToolTipRole)
         self.voice.setCurrentIndex(max(0, self.voice.findData(canonical_voice(self.config['voice'] or default))))
         form.addRow('Giọng', self.voice)
@@ -255,6 +284,7 @@ class Window(QMainWindow):
         preview_buttons.addWidget(button('▶ Nghe thử',self.preview_current))
         preview_buttons.addWidget(button('■ Dừng',self.stop_preview))
         form.addRow(preview_buttons)
+        form.addRow(button('Nghe với chỉnh hiện tại',self.preview_tuned))
         info = QLabel('★ Giọng kể / đọc truyện theo mô tả VieNeu. Thiết lập là gợi ý ban đầu, có thể chỉnh theo sở thích. Mẫu nghe dùng thiết lập gợi ý; ngữ điệu theo giọng gốc.')
         info.setObjectName('muted')
         info.setWordWrap(True)
@@ -276,6 +306,24 @@ class Window(QMainWindow):
         self.update_profile_label()
         if not self.config['voice'] and self.config.get('voice_profile',True):
             self.apply_voice_profile()
+        form_layout.addWidget(group)
+        group=QGroupBox('NHỊP NGHỈ & SẮC GIỌNG')
+        form=QFormLayout(group)
+        rhythm=QComboBox()
+        rhythm.addItems(['Mặc định / tự chỉnh','Tự nhiên (model tự ngắt)','Kể truyện','Nhanh gọn'])
+        form.addRow('Thiết lập nhanh',rhythm)
+        for key,label in [('pause_custom','Tự chỉnh nghỉ theo dấu câu'),('use_ref_codes','Bám ngữ điệu của giọng mẫu'),
+                          ('normalize_volume','Cân độ lớn audio'),('trim_silence','Rút im lặng đầu / cuối đoạn')]:
+            cb=QCheckBox(label); cb.setChecked(self.config[key]); self.settings_widgets[key]=cb; form.addRow(cb)
+        self.add_number(form,'Sau dấu phẩy / ; / :','pause_comma',0.,3.,.05,' s')
+        self.add_number(form,'Sau dấu chấm / ? / !','pause_sentence',0.,5.,.05,' s')
+        self.add_number(form,'Sau xuống dòng','pause_newline',0.,10.,.05,' s')
+        self.add_number(form,'Cao độ','pitch',-6.,6.,.5,' bán âm')
+        rhythm.currentIndexChanged.connect(self.set_rhythm)
+        self.settings_widgets['pause_custom'].toggled.connect(self.sync_pause_controls)
+        self.sync_pause_controls()
+        note=QLabel('Khoảng nghỉ là phần im lặng thêm vào tiếng model đã tạo. Tự chỉnh dấu câu chia nhiều đoạn nhỏ hơn, có thể giảm tốc độ xử lý. Cao độ là hiệu ứng, không tạo ra giọng mới.')
+        note.setWordWrap(True); form.addRow(note)
         form_layout.addWidget(group)
         group = QGroupBox('HIỆU NĂNG CPU / GPU')
         form = QFormLayout(group)
@@ -307,6 +355,16 @@ class Window(QMainWindow):
         form_layout.addWidget(group)
         group = QGroupBox('ĐẦU RA')
         form = QFormLayout(group)
+        self.srt_mode=QComboBox()
+        self.srt_mode.addItem('Đọc nối tiếp tự nhiên','continuous')
+        self.srt_mode.addItem('Giữ mốc thời gian SRT','timeline')
+        self.srt_mode.setCurrentIndex(max(0,self.srt_mode.findData(self.config['srt_mode'])))
+        form.addRow('Khi nhập SRT',self.srt_mode)
+        self.add_number(form,'Co giọng SRT tối đa','srt_max_speed',1.,4.,.1,' ×')
+        cb=QCheckBox('Xuất kèm SRT theo đoạn')
+        cb.setChecked(self.config['export_srt']); self.settings_widgets['export_srt']=cb; form.addRow(cb)
+        note=QLabel('Giữ mốc: chèn im lặng, tăng tốc đoạn quá dài trong giới hạn trên. Nếu vẫn không vừa sẽ báo lỗi, không cắt lời. Chỉnh tốc độ không đổi mốc SRT gốc.')
+        note.setWordWrap(True); form.addRow(note)
         self.format = QComboBox()
         self.format.addItems(['wav', 'mp3', 'flac', 'm4a'])
         self.format.setCurrentText(self.config['format'])
@@ -314,7 +372,7 @@ class Window(QMainWindow):
         self.outdir = QLineEdit(self.config['output_dir'])
         form.addRow(self.outdir)
         form.addRow(button('Chọn thư mục đầu ra…', self.pick_output))
-        for key, label in [('same_folder', 'Lưu cạnh file TXT'), ('recursive', 'Quét cả thư mục con'),
+        for key, label in [('same_folder', 'Lưu cạnh file TXT / SRT'), ('recursive', 'Quét cả thư mục con'),
                            ('preserve_tree', 'Giữ cấu trúc thư mục'), ('cleanup', 'Xóa cache khi hoàn tất')]:
             cb = QCheckBox(label)
             cb.setChecked(self.config[key])
@@ -375,7 +433,7 @@ class Window(QMainWindow):
             s[key] = widget.isChecked() if isinstance(widget, QCheckBox) else widget.value()
         s.update(voice=self.voice.currentData(), format=self.format.currentText(),
                  output_dir=self.outdir.text().strip() or str(ROOT / 'output'), theme=self.theme.currentData(),
-                 accel_mode=self.accel_mode.currentData())
+                 accel_mode=self.accel_mode.currentData(),srt_mode=self.srt_mode.currentData())
         return s
 
     def save(self):
@@ -512,7 +570,7 @@ class Window(QMainWindow):
     def add_text(self):
         try:
             self.save()
-            self.store.add(self.editor.toPlainText(), self.name.text().strip() or time.strftime('Bai_doc_%Y%m%d_%H%M%S'), self.settings())
+            self.store.add(self.editor.toPlainText(), self.name.text().strip() or time.strftime('Bai_doc_%Y%m%d_%H%M%S'), self.settings(),is_srt=self.editor_srt.isChecked())
             self.tabs.setCurrentIndex(1)
             self.refresh()
         except Exception as exc:
@@ -524,9 +582,10 @@ class Window(QMainWindow):
         errors = []
         seen = set()
         for path in map(Path, paths):
-            files = sorted(path.rglob('*.txt') if self.config['recursive'] else path.glob('*.txt')) if path.is_dir() else [path]
+            scan=path.rglob if self.config['recursive'] else path.glob
+            files = sorted([*scan('*.txt'),*scan('*.srt')]) if path.is_dir() else [path]
             for file in files:
-                if file.suffix.lower() != '.txt' or str(file.resolve()).casefold() in seen:
+                if file.suffix.lower() not in ('.txt','.srt') or str(file.resolve()).casefold() in seen:
                     continue
                 seen.add(str(file.resolve()).casefold())
                 try:
@@ -535,14 +594,14 @@ class Window(QMainWindow):
                     count += 1
                 except Exception as exc:
                     errors.append(f'{file.name}: {exc}')
-        self.append_log(f'Đã thêm {count} file TXT.')
+        self.append_log(f'Đã thêm {count} file TXT / SRT.')
         self.tabs.setCurrentIndex(1)
         self.refresh()
         if errors:
             self.error('\n'.join(errors[:10]))
 
     def pick_files(self):
-        paths, _ = QFileDialog.getOpenFileNames(self, 'Chọn các file văn bản', '', 'Text (*.txt)')
+        paths, _ = QFileDialog.getOpenFileNames(self, 'Chọn văn bản / phụ đề', '', 'Văn bản và phụ đề (*.txt *.srt)')
         if paths:
             self.add_paths(paths)
 
@@ -601,6 +660,9 @@ class Window(QMainWindow):
             self.open_path(Path(value).parent)
         elif kind == 'preview':
             if self.requested_preview and Path(value)==preview_path(self.requested_preview) and not self.closing:
+                self.play_sample(value)
+        elif kind == 'tuned_preview':
+            if self.requested_preview=='tuned' and not self.closing:
                 self.play_sample(value)
         elif kind == 'samples':
             self.refresh_samples()
@@ -721,8 +783,9 @@ class Window(QMainWindow):
         self.sample_table.setRowCount(len(items))
         for i,(voice,desc) in enumerate(items):
             path=preview_path(voice)
-            for col,value in enumerate([voice,desc,'Đã lưu' if path.exists() else 'Chưa tạo']):
+            for col,value in enumerate([display_name(voice),desc,'Đã lưu' if path.exists() else 'Chưa tạo']):
                 item=QTableWidgetItem(value)
+                if col==0: item.setData(Qt.UserRole,voice)
                 item.setToolTip(str(path) if col==2 else desc)
                 self.sample_table.setItem(i,col,item)
         if selected>=0:
@@ -733,6 +796,57 @@ class Window(QMainWindow):
         self.player.setSource(QUrl.fromLocalFile(str(path)))
         self.player.play()
         self.statusBar().showMessage('Đang nghe: '+Path(path).stem,6000)
+
+    def sync_pause_controls(self):
+        for key in ('pause_comma','pause_sentence','pause_newline'):
+            self.settings_widgets[key].setEnabled(self.settings_widgets['pause_custom'].isChecked())
+
+    def set_rhythm(self,index):
+        if index==0: return
+        self.settings_widgets['pause_custom'].setChecked(index!=1)
+        if index in (2,3):
+            values=(.18,.4,.7) if index==2 else (.08,.2,.35)
+            for key,value in zip(('pause_comma','pause_sentence','pause_newline'),values):
+                self.settings_widgets[key].setValue(value)
+
+    def pick_clone(self):
+        path,_=QFileDialog.getOpenFileName(self,'Chọn mẫu giọng','','Audio (*.wav *.mp3 *.flac *.m4a *.ogg *.aac *.mp4)')
+        if path: self.clone_file.setText(path)
+
+    def start_clone(self):
+        if self.busy():
+            self.error('Chờ tác vụ hiện tại kết thúc rồi tạo giọng.'); return
+        if not self.clone_name.text().strip() or not Path(self.clone_file.text()).is_file():
+            self.error('Nhập tên giọng và chọn file audio mẫu.'); return
+        self.stop_preview()
+        self.aux=TaskWorker('clone',self.engine,request=dict(name=self.clone_name.text(),source=self.clone_file.text(),
+            start=self.clone_start.value(),seconds=self.clone_length.value(),denoise=self.clone_denoise.isChecked()))
+        self.aux.event.connect(self.on_event)
+        self.aux.result.connect(self.clone_ready)
+        self.aux.finished.connect(self.finished)
+        self.aux.start(); self.refresh()
+
+    def clone_ready(self,key):
+        self.voice.blockSignals(True)
+        self.voice.clear()
+        for name,desc in voices()[0]:
+            self.voice.addItem(('★ ' if name in NARRATORS else 'Cá nhân • ' if name.startswith('clone:') else '')+display_name(name),name)
+            self.voice.setItemData(self.voice.count()-1,desc,Qt.ToolTipRole)
+        self.voice.setCurrentIndex(self.voice.findData(key))
+        self.voice.blockSignals(False)
+        self.refresh_samples()
+        self.append_log('Đã lưu giọng cá nhân: '+display_name(key))
+        if not self.closing: self.voice_changed()
+
+    def preview_tuned(self):
+        if self.busy():
+            self.error('Chờ lượt xử lý hiện tại kết thúc rồi tạo mẫu tùy chỉnh.'); return
+        self.stop_preview()
+        self.requested_preview='tuned'
+        self.aux=TaskWorker('tuned',self.engine,request=self.settings() | dict(format='wav'))
+        self.aux.event.connect(self.on_event)
+        self.aux.finished.connect(self.finished)
+        self.aux.start(); self.refresh()
 
     def update_profile_label(self):
         p=profile(self.voice.currentData())
@@ -777,7 +891,7 @@ class Window(QMainWindow):
         if row<0:
             self.error('Hãy chọn một giọng trong bảng.')
             return
-        voice=self.sample_table.item(row,0).text()
+        voice=self.sample_table.item(row,0).data(Qt.UserRole)
         self.voice.setCurrentIndex(self.voice.findData(voice))
         self.preview_timer.stop()
         self.pending_preview=None

@@ -14,7 +14,7 @@ if os.name == 'nt':
 os.environ['HF_HUB_DISABLE_XET'] = '1'
 os.environ['HF_HUB_DOWNLOAD_TIMEOUT'] = '300'
 PATTERNS = {
-    'pnnbao-ump/VieNeu-TTS-v3-Turbo': ['onnx_update/*', 'update/*', 'config.json', 'speaker_encoder.onnx', 'voices_v3_turbo.json', 'LICENSE*', 'README.md'],
+    'pnnbao-ump/VieNeu-TTS-v3-Turbo': ['onnx_update/*', 'update/*', 'config.json', 'speaker_encoder.onnx', 'denoiser.onnx*', 'voices_v3_turbo.json', 'LICENSE*', 'README.md'],
     'OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano': ['*.json', '*.py', '*.safetensors', 'LICENSE*', 'README.md'],
     'OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano-ONNX': ['moss_audio_tokenizer_decode_full.onnx', 'moss_audio_tokenizer_decode_shared.data', 'moss_audio_tokenizer_decode_step.onnx', 'codec_browser_onnx_meta.json', 'moss_audio_tokenizer_encode.onnx', 'moss_audio_tokenizer_encode.data', 'LICENSE*', 'README.md'],
 }

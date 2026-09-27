@@ -3,6 +3,17 @@ import gc
 import time
 
 
+def voice_argument(settings):
+    data=settings.get('voice_data')
+    if data:
+        import numpy as np
+        return dict(speaker_emb=np.asarray(data['speaker_emb'],dtype=np.float32),
+                    codes=np.asarray(data['codes'],dtype=np.int64))
+    if settings.get('voice','').startswith('clone:'):
+        raise ValueError('Tác vụ thiếu dữ liệu giọng clone.')
+    return settings.get('voice') or None
+
+
 class SingleGraphCache(dict):
     """Retain only one CUDA graph shape on 4 GB cards, evict BEFORE allocation."""
     def __init__(self, release):
