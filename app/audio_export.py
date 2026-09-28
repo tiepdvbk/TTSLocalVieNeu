@@ -52,12 +52,17 @@ def build_audio(chunks, settings, cache, render):
                 budget=round(cue['end']*RATE)-round(cue['start']*RATE)
                 actual=sf.info(fitted).frames
                 if actual>budget:
-                    factor=actual/budget*1.01
-                    if factor>settings.get('srt_max_speed',2.):
-                        raise ValueError(f'SRT mục {ci+1} quá dài cho khung giờ (cần tăng {factor:.2f}×). Tăng giới hạn co giọng hoặc chọn đọc nối tiếp. Không cắt lời.')
+                    factor=actual/budget*1.03
                     compressed=cache/'cue-fit.wav'
-                    render(fitted,compressed,dict(speed=factor,volume=100))
-                    fitted=compressed
+                    for _ in range(4):
+                        if factor>settings.get('srt_max_speed',3.):
+                            raise ValueError(f'SRT mục {ci+1} quá dài cho khung giờ (cần tăng {factor:.2f}×). Tăng giới hạn co giọng hoặc chọn đọc nối tiếp. Không cắt lời.')
+                        render(fitted,compressed,dict(speed=factor,volume=100))
+                        actual=sf.info(compressed).frames
+                        if actual<=budget:
+                            fitted=compressed
+                            break
+                        factor*=actual/budget*1.03
                 if sf.info(fitted).frames>budget:
                     raise ValueError(f'Không thể ghép SRT mục {ci+1} mà không cắt lời. Chọn đọc nối tiếp.')
                 silence(dest, max(0,round(cue['start']*RATE)-dest.tell()))

@@ -3,7 +3,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 import soundfile as sf
-from app.core import Store, Runner, DEFAULTS
+from app.core import Store, Runner, DEFAULTS, load_config
+from app import core
 from app.speech_plan import parse_srt, format_srt, make_plan
 from app import voice_library
 from tools.runtime_support import voice_argument
@@ -19,7 +20,30 @@ def test_srt_parse_roundtrip_and_reject():
         with pytest.raises(ValueError): parse_srt(bad)
     overlap=SRT.replace('00:00:03,000','00:00:01,500')
     with pytest.raises(ValueError): make_plan(overlap,DEFAULTS|dict(srt_mode='timeline'),True)
-    assert len(make_plan(overlap,DEFAULTS,True)[1])==2
+    assert len(make_plan(overlap,DEFAULTS|dict(srt_mode='continuous'),True)[1])==2
+
+def test_existing_srt_settings_upgrade_once(tmp_path,monkeypatch):
+    monkeypatch.setattr(core,'ROOT',tmp_path)
+    (tmp_path/'data').mkdir()
+    config=tmp_path/'data/config.json'
+    config.write_text(json.dumps(dict(srt_mode='continuous',srt_max_speed=2.,speed=1.05)),encoding='utf-8')
+    loaded=load_config()
+    assert loaded['srt_mode']=='timeline' and loaded['srt_max_speed']==3.
+    assert loaded['speed']==1.05
+    config.write_text(json.dumps(loaded|dict(srt_mode='continuous')),encoding='utf-8')
+    assert load_config()['srt_mode']=='continuous'
+
+def test_default_import_preserves_long_srt_timeline(tmp_path):
+    assert DEFAULTS['srt_mode']=='timeline'
+    ending='00:12:31,340'
+    srt=f'1\n00:00:00,000 --> 00:00:01,000\nXin chào.\n\n2\n00:12:30,000 --> {ending}\nChuyện kết thúc.\n'
+    store=Store(tmp_path)
+    settings=DEFAULTS|dict(output_dir=str(tmp_path/'out'),speed=1.05)
+    jid=store.add(srt,'long.srt',settings,is_srt=True)
+    Runner(store,FakeEngine()).run([jid])
+    job=store.job(jid)
+    assert job['status']=='DONE',job['error']
+    assert sf.info(job['output']).duration==751.34
 
 def test_punctuation_decimal_newline():
     plan,_=make_plan('Giá 3.5 đồng, rất tốt. Đi thôi!\nNgày mai.',DEFAULTS|dict(pause_custom=True))
@@ -64,6 +88,18 @@ def test_timeline_compresses_within_limit(tmp_path):
     job=store.job(jid)
     assert job['status']=='DONE',job['error']
     assert sf.info(job['output']).duration==1.5
+
+def test_timeline_fit_handles_ffmpeg_rounding(tmp_path):
+    class OnePointTwo(FakeEngine):
+        def synthesize(self,text,settings):
+            return np.tile(super().synthesize(text,settings),5)[:57600]
+    store=Store(tmp_path)
+    settings=DEFAULTS|dict(output_dir=str(tmp_path/'out'),speed=1.05,srt_max_speed=3.)
+    jid=store.add('1\n00:00:00,000 --> 00:00:00,680\nXin chào.','rounding',settings,is_srt=True)
+    Runner(store,OnePointTwo()).run([jid])
+    job=store.job(jid)
+    assert job['status']=='DONE',job['error']
+    assert sf.info(job['output']).duration==.68
 
 def test_clone_snapshot_and_worker_arrays(tmp_path,monkeypatch):
     monkeypatch.setattr(voice_library,'LIBRARY_DIR',tmp_path/'voices')

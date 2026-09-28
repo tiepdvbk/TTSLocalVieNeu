@@ -32,7 +32,7 @@ DEFAULTS = dict(voice='', threads=4, chunk_size=220, speed=1.0, volume=100,
                 accel_mode='auto', gpu_batch=2, voice_profile=True, auto_preview=True,
                 pitch=0., normalize_volume=False, trim_silence=False, use_ref_codes=True,
                 pause_custom=False, pause_comma=.18, pause_sentence=.4, pause_newline=.7,
-                export_srt=False, srt_mode='continuous', srt_max_speed=2.)
+                export_srt=False, srt_mode='timeline', srt_max_speed=3.)
 
 def digest(path):
     h = hashlib.sha256()
@@ -49,7 +49,16 @@ def atomic_json(path, data):
 
 def load_config():
     try:
-        return DEFAULTS | json.loads((ROOT / 'data/config.json').read_text(encoding='utf-8'))
+        saved=json.loads((ROOT / 'data/config.json').read_text(encoding='utf-8'))
+        # Old releases defaulted to dropping timestamps. Upgrade that default
+        # once, then preserve subsequent explicit choices.
+        if saved.get('srt_defaults_version',1)<2:
+            if saved.get('srt_mode','continuous')=='continuous':
+                saved['srt_mode']='timeline'
+            if saved.get('srt_max_speed',2.)==2.:
+                saved['srt_max_speed']=3.
+            saved['srt_defaults_version']=2
+        return DEFAULTS | saved
     except (OSError, ValueError):
         return DEFAULTS.copy()
 
