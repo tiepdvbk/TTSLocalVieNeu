@@ -58,3 +58,23 @@ def test_enrollment_keeps_raw_and_prepared_samples(tmp_path,monkeypatch):
     store=Store(tmp_path)
     jid=store.add('Một câu kiểm tra.', 'sample',DEFAULTS|dict(voice=key,temperature=1.))
     assert json.loads(store.job(jid)['settings'])['temperature']==.7
+
+
+def test_delete_only_selected_private_voice_and_preserve_job_snapshot(tmp_path,monkeypatch):
+    monkeypatch.setattr(v,'LIBRARY_DIR',tmp_path/'voices')
+    folder=v.LIBRARY_DIR;folder.mkdir()
+    keys=['clone:'+'a'*32,'clone:'+'b'*32]
+    data=dict(speaker_emb=[.1]*192,codes=[[1]*16]*10)
+    for key in keys:
+        target=v.voice_file(key)
+        target.write_text(json.dumps(dict(id=key,name=key,voice=data)),encoding='utf-8')
+        for audio in (target.with_suffix('.wav'),target.with_suffix('.prepared.wav')): audio.write_bytes(b'voice')
+    store=Store(tmp_path)
+    jid=store.add('Một câu.','story',DEFAULTS|dict(voice=keys[0]))
+    assert v.delete_voice(keys[0])==keys[0]
+    assert not v.voice_file(keys[0]).exists()
+    assert not v.voice_file(keys[0]).with_suffix('.wav').exists()
+    assert not v.voice_file(keys[0]).with_suffix('.prepared.wav').exists()
+    assert v.voice_file(keys[1]).exists()
+    assert json.loads(store.job(jid)['settings'])['voice_data']==data
+    with pytest.raises(ValueError): v.delete_voice('Thiện Minh')

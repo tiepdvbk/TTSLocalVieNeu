@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
 from .core import ROOT, Store, Runner, Engine, load_config, atomic_json, read_text, voices, export_audio
 from .acceleration import LABELS, hardware_info, recommendation, preview_path, create_preview, valid_preview, benchmark, create_tuned_preview
 from .voice_profiles import canonical_voice, profile, profile_settings, NARRATORS
-from .voice_library import display_name, create_voice, inspect_sample, voice_file
+from .voice_library import display_name, create_voice, delete_voice, entries, inspect_sample, voice_file
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 import threading
 
@@ -258,8 +258,13 @@ class Window(QMainWindow):
         clone_form.addRow(self.clone_report)
         self.clone_btn=button('Tạo và lưu giọng cá nhân',self.start_clone,True)
         clone_form.addRow(self.clone_btn)
+        self.clone_saved=QComboBox()
+        clone_form.addRow('Giọng đã lưu',self.clone_saved)
+        self.delete_clone_btn=button('Xóa giọng cá nhân đã chọn',self.delete_clone)
+        clone_form.addRow(self.delete_clone_btn)
         clone_form.addRow(QLabel('Giọng được lưu riêng trong data/voices và xuất hiện trong danh sách Giọng.'))
         self.tabs.addTab(clone_page,'Clone giọng')
+        self.refresh_saved_voices()
         self.progress_label = QLabel('Sẵn sàng • Thêm nội dung rồi nhấn Bắt đầu')
         l.addWidget(self.progress_label)
         self.file_progress = QProgressBar()
@@ -897,6 +902,48 @@ class Window(QMainWindow):
             self.clone_report.setText('Đã lấy mẫu gốc đã lưu. Nghe kiểm tra, chọn lọc nhiễu phù hợp rồi tạo thành giọng mới để so sánh.')
         except Exception as exc: self.error(exc)
 
+    def refresh_saved_voices(self,prefer=None):
+        selected=prefer or self.clone_saved.currentData()
+        self.clone_saved.blockSignals(True)
+        self.clone_saved.clear()
+        for key,name in entries(): self.clone_saved.addItem(name,key)
+        self.clone_saved.setCurrentIndex(self.clone_saved.findData(selected) if self.clone_saved.findData(selected)>=0 else 0)
+        self.clone_saved.blockSignals(False)
+        self.delete_clone_btn.setEnabled(self.clone_saved.count()>0)
+
+    def delete_clone(self):
+        if self.busy():
+            self.error('Chờ tác vụ hiện tại kết thúc rồi xóa giọng.'); return
+        key=self.clone_saved.currentData()
+        if not key: self.error('Chọn một giọng cá nhân đã lưu.'); return
+        name=display_name(key)
+        saved_jobs=sum(json.loads(job['settings']).get('voice')==key for job in self.store.jobs())
+        detail=f'Giọng này đang có trong {saved_jobs} tác vụ đã lưu; các tác vụ đó vẫn dùng bản sao giọng đã chốt.' if saved_jobs else 'Các giọng có sẵn của VieNeu không bị ảnh hưởng.'
+        answer=QMessageBox.question(self,'Xóa giọng cá nhân',
+            f'Xóa “{name}” cùng mẫu gốc và mẫu đã xử lý trên máy?\n\n{detail}',
+            QMessageBox.Yes|QMessageBox.No,QMessageBox.No)
+        if answer!=QMessageBox.Yes: return
+        try:
+            self.stop_preview()
+            raw=voice_file(key).with_suffix('.wav')
+            if self.clone_file.text()==str(raw): self.clone_file.clear()
+            delete_voice(key)
+            # Previews are generated from this exact clone ID; remove its cache.
+            for sample in (ROOT/'voice_samples').glob(key.replace(':','_')+'_*.wav'):
+                sample.unlink(missing_ok=True)
+                sample.with_suffix('.json').unlink(missing_ok=True)
+            self.voice.blockSignals(True)
+            index=self.voice.findData(key)
+            if index>=0: self.voice.removeItem(index)
+            if self.voice.currentIndex()<0: self.voice.setCurrentIndex(0)
+            self.voice.blockSignals(False)
+            self.refresh_saved_voices()
+            self.refresh_samples()
+            self.voice_changed()
+            self.save()
+            self.append_log('Đã xóa giọng cá nhân: '+name)
+        except Exception as exc: self.error(exc)
+
     def start_clone(self):
         if self.busy():
             self.error('Chờ tác vụ hiện tại kết thúc rồi tạo giọng.'); return
@@ -919,6 +966,7 @@ class Window(QMainWindow):
         self.voice.setCurrentIndex(self.voice.findData(key))
         self.voice.blockSignals(False)
         self.refresh_samples()
+        self.refresh_saved_voices(key)
         self.append_log('Đã lưu giọng cá nhân: '+display_name(key))
         report=json.loads(voice_file(key).read_text(encoding='utf-8')).get('quality')
         if report: self.show_clone_report(report)

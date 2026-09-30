@@ -106,6 +106,17 @@ def load_voice(key):
         raise ValueError('Không đọc được giọng cá nhân; hãy tạo lại giọng từ mẫu thu.') from exc
 
 
+def delete_voice(key):
+    """Remove one local enrolment and its audio; never touch bundled presets."""
+    target=voice_file(key)
+    metadata=json.loads(target.read_text(encoding='utf-8'))
+    if metadata.get('id')!=key:
+        raise ValueError('Hồ sơ giọng không khớp mã giọng.')
+    for path in (target,target.with_suffix('.wav'),target.with_suffix('.prepared.wav')):
+        path.unlink(missing_ok=True)
+    return metadata['name']
+
+
 def create_voice(engine, name, source, start=0., seconds=8., denoise=True, prepare=True):
     name=name.strip()
     if not name or len(name)>80:

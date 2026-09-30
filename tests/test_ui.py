@@ -7,6 +7,30 @@ from app.core import Store, DEFAULTS
 from tests.test_core import FakeEngine
 
 
+def test_delete_saved_clone_from_ui(tmp_path,monkeypatch):
+    import json
+    from app import voice_library as library
+    app=QApplication.instance() or QApplication([])
+    key='clone:'+'c'*32
+    monkeypatch.setattr(library,'LIBRARY_DIR',tmp_path/'voices')
+    library.LIBRARY_DIR.mkdir()
+    profile=library.voice_file(key)
+    profile.write_text(json.dumps(dict(id=key,name='My voice',voice=dict(speaker_emb=[.1]*192,codes=[[1]*16]*10))),encoding='utf-8')
+    profile.with_suffix('.wav').write_bytes(b'audio')
+    monkeypatch.setattr(ui,'Store',lambda:Store(tmp_path))
+    monkeypatch.setattr(ui,'ROOT',tmp_path)
+    monkeypatch.setattr(ui,'load_config',lambda:DEFAULTS|dict(voice=key,auto_preview=False))
+    monkeypatch.setattr(ui.QMessageBox,'question',lambda *a,**k:ui.QMessageBox.Yes)
+    w=ui.Window()
+    try:
+        assert w.clone_saved.findData(key)>=0
+        w.delete_clone()
+        assert not profile.exists() and not profile.with_suffix('.wav').exists()
+        assert w.clone_saved.findData(key)<0 and w.voice.findData(key)<0
+        assert w.voice.currentData() and not w.voice.currentData().startswith('clone:')
+    finally:w.close()
+
+
 def test_clone_modes_and_emotion_controls(tmp_path,monkeypatch):
     app=QApplication.instance() or QApplication([])
     key='clone:'+'a'*32
