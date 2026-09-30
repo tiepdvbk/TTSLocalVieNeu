@@ -7,6 +7,36 @@ from app.core import Store, DEFAULTS
 from tests.test_core import FakeEngine
 
 
+def test_clone_modes_and_emotion_controls(tmp_path,monkeypatch):
+    app=QApplication.instance() or QApplication([])
+    key='clone:'+'a'*32
+    monkeypatch.setattr(ui,'Store',lambda:Store(tmp_path))
+    monkeypatch.setattr(ui,'ROOT',tmp_path)
+    monkeypatch.setattr(ui,'voices',lambda:([('Thiện Minh','Preset'),(key,'Clone')],'Thiện Minh'))
+    monkeypatch.setattr(ui,'load_config',lambda:DEFAULTS|dict(voice=key,auto_preview=False,voice_profile=False))
+    w=ui.Window()
+    try:
+        assert w.clone_quality.currentData()=='stable'
+        assert not w.settings_widgets['temperature'].isEnabled()
+        w.clone_quality.setCurrentIndex(w.clone_quality.findData('manual'))
+        assert w.settings_widgets['temperature'].isEnabled()
+        w.settings_widgets['temperature'].setValue(.85)
+        w.voice.setCurrentIndex(w.voice.findData('Thiện Minh'))
+        assert not w.clone_quality.isEnabled()
+        assert w.settings_widgets['temperature'].isEnabled()
+        w.insert_emotion(2)
+        assert '[thở dài]' in w.editor.toPlainText()
+        assert w.clone_prepare.isChecked() and w.clone_denoise.isChecked()
+        import json
+        metadata=tmp_path/'voice.json'
+        metadata.write_text(json.dumps(dict(name='Clone',seconds=6.,quality=dict(seconds=8.))),encoding='utf-8')
+        monkeypatch.setattr(ui,'voice_file',lambda _:metadata)
+        w.voice.setCurrentIndex(w.voice.findData(key))
+        w.reuse_clone()
+        assert w.clone_length.value()==8.  # reuse the original crop, not its trimmed duration
+    finally: w.close()
+
+
 def test_srt_and_voice_controls(tmp_path,monkeypatch):
     app=QApplication.instance() or QApplication([])
     monkeypatch.setattr(ui,'Store',lambda:Store(tmp_path))

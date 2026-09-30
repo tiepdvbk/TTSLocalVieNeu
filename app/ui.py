@@ -10,11 +10,11 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
     QLabel, QPushButton, QPlainTextEdit, QFileDialog, QLineEdit, QComboBox, QSpinBox,
     QDoubleSpinBox, QCheckBox, QFormLayout, QGroupBox, QTableWidget, QTableWidgetItem,
     QHeaderView, QProgressBar, QTabWidget, QMessageBox, QScrollArea, QAbstractItemView,
-    QSplitter)
+    QSplitter, QSizePolicy)
 from .core import ROOT, Store, Runner, Engine, load_config, atomic_json, read_text, voices, export_audio
 from .acceleration import LABELS, hardware_info, recommendation, preview_path, create_preview, valid_preview, benchmark, create_tuned_preview
 from .voice_profiles import canonical_voice, profile, profile_settings, NARRATORS
-from .voice_library import display_name, create_voice
+from .voice_library import display_name, create_voice, inspect_sample, voice_file
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 import threading
 
@@ -61,6 +61,8 @@ class TaskWorker(QThread):
             elif self.task=='clone':
                 self.event.emit('log','Đang tạo giọng cá nhân từ đoạn mẫu…')
                 self.result.emit(create_voice(self.engine,**self.request))
+            elif self.task=='inspect_clone':
+                self.result.emit(inspect_sample(**self.request))
             elif self.task=='tuned':
                 self.event.emit('tuned_preview',str(create_tuned_preview(self.engine,self.request)))
             else:
@@ -150,6 +152,11 @@ class Window(QMainWindow):
         inp.addWidget(self.editor)
         self.editor_srt=QCheckBox('Nội dung dán ở trên là SRT (có mốc thời gian)')
         inp.addWidget(self.editor_srt)
+        self.emotion_cue=QComboBox()
+        self.emotion_cue.addItems(['Chèn biểu cảm thử nghiệm…','[cười]','[thở dài]','[hắng giọng]'])
+        self.emotion_cue.setToolTip('Chèn tại con trỏ. Thẻ thử nghiệm của model; ngữ điệu chủ yếu theo giọng mẫu.')
+        self.emotion_cue.activated.connect(self.insert_emotion)
+        inp.addWidget(self.emotion_cue)
         row = QHBoxLayout()
         self.count = QLabel('0 ký tự')
         self.editor.textChanged.connect(lambda: self.count.setText(f'{len(self.editor.toPlainText()):,} ký tự'))
@@ -239,7 +246,16 @@ class Window(QMainWindow):
         clone_form.addRow('Bắt đầu tại',self.clone_start)
         clone_form.addRow('Lấy đoạn dài',self.clone_length)
         self.clone_denoise=QCheckBox('Lọc nhiễu mẫu bằng model (chậm hơn)')
+        self.clone_denoise.setChecked(True)
         clone_form.addRow(self.clone_denoise)
+        self.clone_prepare=QCheckBox('Chuẩn hóa mức âm và giảm im lặng ở hai đầu')
+        self.clone_prepare.setChecked(True)
+        clone_form.addRow(self.clone_prepare)
+        clone_form.addRow(button('Nghe và kiểm tra đoạn mẫu',self.inspect_clone))
+        clone_form.addRow(button('Lấy mẫu từ giọng cá nhân đang chọn',self.reuse_clone))
+        self.clone_report=QLabel('Chọn đoạn nói liền mạch, rõ dấu tiếng Việt và có ngữ điệu bạn muốn. Với bản thu đã sạch, thử cả bật / tắt lọc nhiễu để so sánh.')
+        self.clone_report.setWordWrap(True)
+        clone_form.addRow(self.clone_report)
         self.clone_btn=button('Tạo và lưu giọng cá nhân',self.start_clone,True)
         clone_form.addRow(self.clone_btn)
         clone_form.addRow(QLabel('Giọng được lưu riêng trong data/voices và xuất hiện trong danh sách Giọng.'))
@@ -284,7 +300,18 @@ class Window(QMainWindow):
         preview_buttons.addWidget(button('▶ Nghe thử',self.preview_current))
         preview_buttons.addWidget(button('■ Dừng',self.stop_preview))
         form.addRow(preview_buttons)
-        form.addRow(button('Nghe với chỉnh hiện tại',self.preview_tuned))
+        tuned_button=button('Nghe với chỉnh hiện tại',self.preview_tuned)
+        tuned_button.setToolTip('Bôi đen một câu trong Soạn nội dung để nghe câu đó. Không bôi đen: nghe mẫu truyện mặc định.')
+        form.addRow(tuned_button)
+        self.clone_quality=QComboBox()
+        for label,key in [('Rõ và ổn định','stable'),('Tự nhiên theo mẫu','natural'),('Tự chỉnh nâng cao','manual')]:
+            self.clone_quality.addItem(label,key)
+        self.clone_quality.setCurrentIndex(max(0,self.clone_quality.findData(self.config.get('clone_quality','stable'))))
+        form.addRow('Chế độ clone',self.clone_quality)
+        self.clone_quality.currentIndexChanged.connect(self.sync_clone_controls)
+        self.clone_quality_note=QLabel()
+        self.clone_quality_note.setWordWrap(True)
+        form.addRow(self.clone_quality_note)
         info = QLabel('★ Giọng kể / đọc truyện theo mô tả VieNeu. Thiết lập là gợi ý ban đầu, có thể chỉnh theo sở thích. Mẫu nghe dùng thiết lập gợi ý; ngữ điệu theo giọng gốc.')
         info.setObjectName('muted')
         info.setWordWrap(True)
@@ -400,6 +427,13 @@ class Window(QMainWindow):
         form_layout.addWidget(button('Lưu thiết lập', self.save))
         form_layout.addWidget(button('Hướng dẫn sử dụng', lambda: self.open_path(ROOT / 'HUONG_DAN.html')))
         form_layout.addStretch()
+        # Long personal voice names must not widen the entire settings sidebar.
+        for combo in panel.findChildren(QComboBox):
+            combo.setSizePolicy(QSizePolicy.Ignored,QSizePolicy.Fixed)
+            combo.setMinimumContentsLength(8)
+            combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        for form in panel.findChildren(QFormLayout):
+            form.setRowWrapPolicy(QFormLayout.WrapLongRows)
         scroll.setWidget(panel)
         splitter.addWidget(scroll)
         splitter.setSizes([840, 340])
@@ -410,6 +444,7 @@ class Window(QMainWindow):
         self.refresh()
         self.refresh_samples()
         self.sync_acceleration_controls()
+        self.sync_clone_controls()
         self.detect_worker=TaskWorker('hardware')
         self.detect_worker.result.connect(self.show_hardware)
         self.detect_worker.start()
@@ -433,7 +468,7 @@ class Window(QMainWindow):
             s[key] = widget.isChecked() if isinstance(widget, QCheckBox) else widget.value()
         s.update(voice=self.voice.currentData(), format=self.format.currentText(),
                  output_dir=self.outdir.text().strip() or str(ROOT / 'output'), theme=self.theme.currentData(),
-                 accel_mode=self.accel_mode.currentData(),srt_mode=self.srt_mode.currentData())
+                 accel_mode=self.accel_mode.currentData(),srt_mode=self.srt_mode.currentData(),clone_quality=self.clone_quality.currentData())
         return s
 
     def save(self):
@@ -813,6 +848,55 @@ class Window(QMainWindow):
         path,_=QFileDialog.getOpenFileName(self,'Chọn mẫu giọng','','Audio (*.wav *.mp3 *.flac *.m4a *.ogg *.aac *.mp4)')
         if path: self.clone_file.setText(path)
 
+    def insert_emotion(self,index):
+        if index:
+            self.editor.insertPlainText(' '+self.emotion_cue.itemText(index)+' ')
+            self.emotion_cue.setCurrentIndex(0)
+            self.editor.setFocus()
+
+    def sync_clone_controls(self):
+        if not hasattr(self,'clone_quality_note'): return
+        clone=(self.voice.currentData() or '').startswith('clone:')
+        mode=self.clone_quality.currentData()
+        self.clone_quality.setEnabled(clone)
+        messages={'stable':'Clone: Temperature 0.70, Top K 25, Top P 0.90, chống lặp 1.20; đoạn tối đa 180 ký tự. Ưu tiên ổn định, không bảo đảm hết lỗi phát âm.',
+                  'natural':'Clone: Temperature 0.80, Top K 25, Top P 0.95, chống lặp 1.20; đoạn tối đa 220 ký tự. Ngữ điệu theo mẫu, kết quả có thể biến thiên.',
+                  'manual':'Clone dùng các thông số Nâng cao bạn tự đặt.'}
+        self.clone_quality_note.setText(messages[mode] if clone else 'Chế độ này áp dụng riêng cho giọng cá nhân.')
+        for key in ('temperature','top_k','top_p','repetition_penalty'):
+            if key in self.settings_widgets: self.settings_widgets[key].setEnabled(not clone or mode=='manual')
+
+    def show_clone_report(self,report):
+        text=f"Mẫu {report['seconds']:.1f}s • mức RMS {report['level_db']:.1f} dBFS • tín hiệu rõ khoảng {report['active_seconds']:.1f}s."
+        text+='\n'+' '.join(report['warnings']) if report['warnings'] else '\nKhông thấy vấn đề mức âm rõ rệt. Vẫn cần nghe kiểm tra nhạc nền, phát âm và ngữ điệu.'
+        self.clone_report.setText(text)
+
+    def inspect_clone(self):
+        if self.busy(): self.error('Chờ tác vụ hiện tại kết thúc.'); return
+        if not Path(self.clone_file.text()).is_file(): self.error('Chọn file audio mẫu trước.'); return
+        self.stop_preview()
+        self.aux=TaskWorker('inspect_clone',request=dict(source=self.clone_file.text(),start=self.clone_start.value(),seconds=self.clone_length.value()))
+        self.aux.result.connect(self.clone_inspected)
+        self.aux.event.connect(self.on_event)
+        self.aux.finished.connect(self.finished)
+        self.aux.start(); self.refresh()
+
+    def clone_inspected(self,result):
+        self.show_clone_report(result['report'])
+        if not self.closing: self.play_sample(result['path'])
+
+    def reuse_clone(self):
+        key=self.voice.currentData() or ''
+        if not key.startswith('clone:'): self.error('Chọn giọng cá nhân trong danh sách Giọng trước.'); return
+        try:
+            path=voice_file(key); meta=json.loads(path.read_text(encoding='utf-8'))
+            self.clone_file.setText(str(path.with_suffix('.wav')))
+            self.clone_name.setText(meta['name']+' • bản mới')
+            self.clone_start.setValue(0)
+            self.clone_length.setValue(meta.get('quality',{}).get('seconds',meta['seconds']))
+            self.clone_report.setText('Đã lấy mẫu gốc đã lưu. Nghe kiểm tra, chọn lọc nhiễu phù hợp rồi tạo thành giọng mới để so sánh.')
+        except Exception as exc: self.error(exc)
+
     def start_clone(self):
         if self.busy():
             self.error('Chờ tác vụ hiện tại kết thúc rồi tạo giọng.'); return
@@ -820,7 +904,7 @@ class Window(QMainWindow):
             self.error('Nhập tên giọng và chọn file audio mẫu.'); return
         self.stop_preview()
         self.aux=TaskWorker('clone',self.engine,request=dict(name=self.clone_name.text(),source=self.clone_file.text(),
-            start=self.clone_start.value(),seconds=self.clone_length.value(),denoise=self.clone_denoise.isChecked()))
+            start=self.clone_start.value(),seconds=self.clone_length.value(),denoise=self.clone_denoise.isChecked(),prepare=self.clone_prepare.isChecked()))
         self.aux.event.connect(self.on_event)
         self.aux.result.connect(self.clone_ready)
         self.aux.finished.connect(self.finished)
@@ -836,6 +920,8 @@ class Window(QMainWindow):
         self.voice.blockSignals(False)
         self.refresh_samples()
         self.append_log('Đã lưu giọng cá nhân: '+display_name(key))
+        report=json.loads(voice_file(key).read_text(encoding='utf-8')).get('quality')
+        if report: self.show_clone_report(report)
         if not self.closing: self.voice_changed()
 
     def preview_tuned(self):
@@ -843,7 +929,10 @@ class Window(QMainWindow):
             self.error('Chờ lượt xử lý hiện tại kết thúc rồi tạo mẫu tùy chỉnh.'); return
         self.stop_preview()
         self.requested_preview='tuned'
-        self.aux=TaskWorker('tuned',self.engine,request=self.settings() | dict(format='wav'))
+        selected=self.editor.textCursor().selectedText().replace('\u2029','\n')
+        if len(selected)>1000:
+            self.error('Chọn tối đa 1.000 ký tự để nghe thử.'); return
+        self.aux=TaskWorker('tuned',self.engine,request=self.settings() | dict(format='wav',_preview_text=selected))
         self.aux.event.connect(self.on_event)
         self.aux.finished.connect(self.finished)
         self.aux.start(); self.refresh()
@@ -864,6 +953,7 @@ class Window(QMainWindow):
 
     def voice_changed(self):
         self.stop_preview()
+        self.sync_clone_controls()
         self.update_profile_label()
         if self.settings_widgets['voice_profile'].isChecked():
             self.apply_voice_profile()

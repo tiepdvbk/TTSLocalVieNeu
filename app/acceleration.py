@@ -314,6 +314,8 @@ def create_preview(engine,voice,force=False):
         return path
     # CPU preview preserves the current voice quality and has low single-call latency.
     settings=DEFAULTS | profile_settings(voice) | dict(voice=voice,threads=4,accel_mode='cpu')
+    from tools.runtime_support import synthesis_settings
+    settings=synthesis_settings(settings)
     parts=[]
     for text in split_text(SAMPLE_TEXT, settings['chunk_size']):
         if parts:
@@ -340,9 +342,11 @@ def create_tuned_preview(engine,settings):
     from .core import Store, Runner
     folder=ROOT/'cache/previews'/uuid.uuid4().hex
     store=Store(folder)
+    settings=settings.copy()
+    text=settings.pop('_preview_text',None) or SAMPLE_TEXT
     settings=settings | dict(accel_mode='cpu', output_dir=str(folder),same_folder=False,
                              cleanup=True,export_srt=False)
-    jid=store.add(SAMPLE_TEXT,'Mau_tuy_chinh',settings)
+    jid=store.add(text,'Mau_tuy_chinh',settings)
     Runner(store,engine).run([jid])
     job=store.job(jid)
     if job['status']!='DONE': raise RuntimeError(job['error'] or 'Không tạo được mẫu.')

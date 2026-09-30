@@ -3,6 +3,18 @@ import gc
 import time
 
 
+def synthesis_settings(settings):
+    """Opt-in presets are snapshotted in new jobs; legacy jobs stay unchanged."""
+    s=settings.copy()
+    if s.get('voice','').startswith('clone:'):
+        mode=s.get('clone_quality','manual')
+        if mode in ('stable','natural'):
+            s.update(temperature=.7 if mode=='stable' else .8,top_k=25,
+                     top_p=.9 if mode=='stable' else .95,repetition_penalty=1.2)
+            s['chunk_size']=min(s['chunk_size'],180 if mode=='stable' else 220)
+    return s
+
+
 def voice_argument(settings):
     data=settings.get('voice_data')
     if data:

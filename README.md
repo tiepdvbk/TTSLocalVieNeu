@@ -4,6 +4,14 @@
 
 ## Clone giọng, nhịp nghỉ và phụ đề
 
+Clone có ba chế độ: **Rõ và ổn định** (mặc định cho tác vụ mới, Temperature 0.70, Top P 0.90, đoạn tối đa 180 ký tự), **Tự nhiên theo mẫu** (0.80 / 0.95 / 220 ký tự) và **Tự chỉnh nâng cao**. Hai preset dùng Top K 25, chống lặp 1.20; các giá trị được chốt khi thêm tác vụ. Đây là thiết lập để thử so sánh, không bảo đảm mọi từ đều đúng hoặc mọi giọng đều hay hơn. Tác vụ cũ giữ thiết lập cũ khi tiếp tục.
+
+Tab Clone cho nghe đúng đoạn mẫu đã chọn và hiển thị mức âm, vỡ đỉnh, khoảng im lặng ước lượng. Bật chuẩn hóa để điều chỉnh mức âm và giảm im lặng hai đầu, giữ nhịp bên trong; lọc nhiễu có thể bật/tắt để so sánh. Giữ cả mẫu gốc và mẫu đã chuẩn bị. Nút **Lấy mẫu từ giọng cá nhân đang chọn** giúp tạo một bản mới từ mẫu cũ mà không sửa giọng cũ.
+
+Bôi đen một câu trong Soạn nội dung rồi bấm **Nghe với chỉnh hiện tại** để so sánh cùng câu dưới các chế độ. Danh sách biểu cảm chèn các thẻ thử nghiệm `[cười]`, `[thở dài]`, `[hắng giọng]`; đây là âm biểu cảm, không phải bộ điều khiển cảm xúc chính xác cho cả câu. Phong cách đọc chủ yếu đi theo ngữ điệu mẫu. Mẫu một người nói rõ, có dấu tiếng Việt trong văn bản và dấu câu hợp lý vẫn rất quan trọng. Không có kiểm tra ASR hay cam kết không đọc sai.
+
+Cập nhật 01/10/2026: PyPI vẫn 3.8.3; đã cập nhật mã nguồn SDK đến `85344322b7258b4e25479b692e8e3396baf9db34`. Các trọng số Turbo và codec trên Hugging Face chưa đổi so với bản đã dùng. BUILD kiểm tra revision nguồn và nâng cấp cả thư mục SDK đã tồn tại; giữ bản nguồn cũ trong `.tools/sdk-backups`.
+
 - Tab **Clone giọng**: chọn audio, đặt tên, chọn vị trí bắt đầu và đoạn mẫu 3–8 giây (ưu tiên 3–8 giây tiếng nói rõ, một người). Có lọc nhiễu tùy chọn; không cần transcript. Tạo xong giọng xuất hiện trong danh sách và có mẫu nghe thử. Chất lượng phụ thuộc bản thu; thử nghe trước khi đọc truyện dài.
 - Giọng cá nhân và đoạn thu được lưu ở `data/voices`; chỉ nằm trên máy, được loại khỏi Git. Sao lưu thư mục này để chuyển giọng sang bản cài khác. Công việc đã thêm vào hàng đợi giữ bản sao thông số giọng riêng.
 - **Nhịp nghỉ & sắc giọng**: chọn Tự nhiên, Kể truyện, Nhanh gọn hoặc tự chỉnh; nghỉ riêng sau phẩy, chấm và xuống dòng, cao độ ±6 bán âm, bám ngữ điệu mẫu, cân độ lớn, rút im lặng đầu/cuối đoạn. Nút **Nghe với chỉnh hiện tại** tạo mẫu theo các giá trị đang chọn. Mẫu tự phát khi đổi giọng dùng thiết lập gợi ý.

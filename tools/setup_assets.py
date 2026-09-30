@@ -6,6 +6,7 @@ import shutil
 import tempfile
 import urllib.request
 import zipfile
+import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -13,7 +14,8 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     revision = (ROOT / 'vendor-revision.txt').read_text().strip()
     target = ROOT / 'vendor/VieNeu-TTS'
-    if not (target / 'pyproject.toml').exists():
+    marker=target / '.studio-revision'
+    if not marker.exists() or marker.read_text().strip()!=revision:
         archive = ROOT / '.tools/vieneu-source.zip'
         urllib.request.urlretrieve(f'https://codeload.github.com/pnnbao97/VieNeu-TTS/zip/{revision}', archive)
         expected = json.loads((ROOT / 'setup-assets.json').read_text())['sdk_zip_sha256']
@@ -27,7 +29,13 @@ def main():
                         raise RuntimeError('Unsafe archive member.')
                 z.extractall(base)
             target.parent.mkdir(exist_ok=True)
-            shutil.move(str(base / f'VieNeu-TTS-{revision}'), target)
+            staged=base / f'VieNeu-TTS-{revision}'
+            (staged / '.studio-revision').write_text(revision,encoding='ascii')
+            if target.exists():
+                backup=ROOT / '.tools/sdk-backups' / uuid.uuid4().hex
+                backup.parent.mkdir(parents=True,exist_ok=True)
+                shutil.move(str(target),backup)
+            shutil.move(str(staged), target)
         archive.unlink()
     import imageio_ffmpeg
     ffmpeg = ROOT / 'tools/ffmpeg.exe'

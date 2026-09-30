@@ -32,7 +32,7 @@ DEFAULTS = dict(voice='', threads=4, chunk_size=220, speed=1.0, volume=100,
                 accel_mode='auto', gpu_batch=2, voice_profile=True, auto_preview=True,
                 pitch=0., normalize_volume=False, trim_silence=False, use_ref_codes=True,
                 pause_custom=False, pause_comma=.18, pause_sentence=.4, pause_newline=.7,
-                export_srt=False, srt_mode='timeline', srt_max_speed=3.)
+                export_srt=False, srt_mode='timeline', srt_max_speed=3., clone_quality='stable')
 
 def digest(path):
     h = hashlib.sha256()
@@ -171,6 +171,8 @@ class Store:
     def add(self, text, name, settings, source=None, relative=None, is_srt=False):
         from .speech_plan import make_plan
         settings=DEFAULTS | settings.copy()
+        from tools.runtime_support import synthesis_settings
+        settings=synthesis_settings(settings)
         settings.pop('voice_data',None)
         if settings['voice'].startswith('clone:'):
             from .voice_library import load_voice
@@ -230,6 +232,8 @@ class Engine:
         self.threads = threads
 
     def synthesize(self, text, settings):
+        from tools.runtime_support import synthesis_settings
+        settings=synthesis_settings(settings)
         self.load(settings['threads'])
         from tools.runtime_support import voice_argument
         if settings['voice'].startswith('clone:') and not settings.get('voice_data'):

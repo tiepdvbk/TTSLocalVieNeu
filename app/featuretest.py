@@ -23,6 +23,8 @@ def run():
     try:
         source=next(p for p in (ROOT/'voice_samples').glob('*.wav') if sf.info(p).duration>=8)
         key=voice_library.create_voice(engine,'Synthetic release test',source,seconds=6,denoise=True)
+        profile=json.loads(voice_library.voice_file(key).read_text(encoding='utf-8'))
+        assert profile['prepared'] and profile['quality']['active_seconds']>=1.5
         settings=DEFAULTS | dict(voice=key,threads=4,accel_mode='cpu',output_dir=str(folder/'audio'),
             same_folder=False,export_srt=True,srt_mode='timeline',pitch=1.,normalize_volume=True)
         store=Store(folder)
@@ -36,6 +38,7 @@ def run():
         assert abs(sf.info(output).duration-25)<.001
         assert parse_srt(output.with_suffix('.srt').read_text(encoding='utf-8-sig'))==parse_srt(text)
         payload=json.loads(job['settings'])
+        assert payload['temperature']==.7 and payload['chunk_size']<=180
         gpu=ProcessEngine('gpu',4)
         target=folder/'gpu-clone.wav'
         gpu.generate(['Câu chuyện bắt đầu dưới ánh trăng.'],[target],payload)
