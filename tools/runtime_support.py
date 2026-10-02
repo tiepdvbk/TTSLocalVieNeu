@@ -8,6 +8,8 @@ def synthesis_settings(settings):
     s=settings.copy()
     if s.get('voice','').startswith('clone:'):
         mode=s.get('clone_quality','manual')
+        if mode == 'short80':
+            s['chunk_size']=min(s['chunk_size'],79)
         if mode in ('stable','natural'):
             s.update(temperature=.7 if mode=='stable' else .8,top_k=25,
                      top_p=.9 if mode=='stable' else .95,repetition_penalty=1.2)

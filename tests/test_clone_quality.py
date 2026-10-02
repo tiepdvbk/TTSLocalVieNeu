@@ -78,3 +78,32 @@ def test_delete_only_selected_private_voice_and_preserve_job_snapshot(tmp_path,m
     assert v.voice_file(keys[1]).exists()
     assert json.loads(store.job(jid)['settings'])['voice_data']==data
     with pytest.raises(ValueError): v.delete_voice('Thiện Minh')
+
+
+@pytest.mark.parametrize('is_srt',[False,True])
+@pytest.mark.parametrize('custom',[False,True])
+def test_short_clone_preserves_content_and_cue_mapping(is_srt,custom):
+    from app.speech_plan import make_plan
+    text='Đêm ấy, nàng đứng bên cửa sổ nhìn những giọt mưa rơi xuống khu vườn vắng lặng. Chàng vẫn chưa trở về, dù lời hẹn đã qua từ rất lâu. '
+    text=text*5
+    source=f'1\n00:00:00,000 --> 00:01:00,000\n{text}\n\n2\n00:01:00,000 --> 00:02:00,000\n{text}' if is_srt else text
+    original=DEFAULTS|dict(voice='clone:'+'a'*32,clone_quality='short80',chunk_size=300,temperature=.85,pause_custom=custom)
+    settings=synthesis_settings(original)
+    assert settings['chunk_size']==79 and settings['temperature']==.85
+    assert original['chunk_size']==300
+    plan,cues=make_plan(source,settings,is_srt)
+    assert all(0<len(p['text'])<80 for p in plan)
+    expected=' '.join((text*(2 if is_srt else 1)).split())
+    assert ' '.join(p['text'] for p in plan)==expected
+    if is_srt:
+        assert {p['cue'] for p in plan}=={0,1}
+        assert cues[-1]['end']==120
+    assert synthesis_settings(original|dict(voice='Thiện Minh'))['chunk_size']==300
+    assert synthesis_settings(original|dict(chunk_size=50))['chunk_size']==50
+
+
+def test_short_clone_hard_limit_for_unbroken_text():
+    from app.core import split_text
+    text='x'*250
+    chunks=split_text(text,synthesis_settings(DEFAULTS|dict(voice='clone:a',clone_quality='short80'))['chunk_size'])
+    assert ''.join(chunks)==text and max(map(len,chunks))==79

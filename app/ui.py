@@ -309,7 +309,7 @@ class Window(QMainWindow):
         tuned_button.setToolTip('Bôi đen một câu trong Soạn nội dung để nghe câu đó. Không bôi đen: nghe mẫu truyện mặc định.')
         form.addRow(tuned_button)
         self.clone_quality=QComboBox()
-        for label,key in [('Rõ và ổn định','stable'),('Tự nhiên theo mẫu','natural'),('Tự chỉnh nâng cao','manual')]:
+        for label,key in [('Rõ và ổn định','stable'),('Tự nhiên theo mẫu','natural'),('Tự chỉnh nâng cao','manual'),('Chia ngắn dưới 80 ký tự','short80')]:
             self.clone_quality.addItem(label,key)
         self.clone_quality.setCurrentIndex(max(0,self.clone_quality.findData(self.config.get('clone_quality','stable'))))
         form.addRow('Chế độ clone',self.clone_quality)
@@ -866,10 +866,11 @@ class Window(QMainWindow):
         self.clone_quality.setEnabled(clone)
         messages={'stable':'Clone: Temperature 0.70, Top K 25, Top P 0.90, chống lặp 1.20; đoạn tối đa 180 ký tự. Ưu tiên ổn định, không bảo đảm hết lỗi phát âm.',
                   'natural':'Clone: Temperature 0.80, Top K 25, Top P 0.95, chống lặp 1.20; đoạn tối đa 220 ký tự. Ngữ điệu theo mẫu, kết quả có thể biến thiên.',
+                  'short80':'Mỗi đoạn tối đa 79 ký tự, tính cả khoảng trắng và dấu câu; ưu tiên dấu câu, rồi khoảng trắng. Giữ thông số Nâng cao bạn đặt. Có thể ngắt vụn hơn; không bảo đảm hết lỗi phát âm. Áp dụng khi thêm tác vụ mới.',
                   'manual':'Clone dùng các thông số Nâng cao bạn tự đặt.'}
         self.clone_quality_note.setText(messages[mode] if clone else 'Chế độ này áp dụng riêng cho giọng cá nhân.')
         for key in ('temperature','top_k','top_p','repetition_penalty'):
-            if key in self.settings_widgets: self.settings_widgets[key].setEnabled(not clone or mode=='manual')
+            if key in self.settings_widgets: self.settings_widgets[key].setEnabled(not clone or mode in ('manual','short80'))
 
     def show_clone_report(self,report):
         text=f"Mẫu {report['seconds']:.1f}s • mức RMS {report['level_db']:.1f} dBFS • tín hiệu rõ khoảng {report['active_seconds']:.1f}s."

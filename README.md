@@ -79,3 +79,7 @@ Nguồn nền: [VieNeu-TTS](https://github.com/pnnbao97/VieNeu-TTS), [model v3 T
 ```
 
 Kiểm thử GUI có dữ liệu riêng trong logs, không sửa hàng đợi người dùng. `--self-test` chặn socket để kiểm tra offline; worker GPU bật chế độ offline của Hugging Face. Kết quả kiểm thử ghi trong `logs`. Các bài test dùng FFmpeg do BAT chuẩn bị.
+
+
+### Clone chia ngắn dưới 80 ký tự
+Chọn giọng cá nhân → **Chế độ clone → Chia ngắn dưới 80 ký tự**. Khi thêm tác vụ mới, mỗi đoạn văn bản tối đa 79 ký tự (sau chuẩn hóa Unicode/khoảng trắng, gồm dấu câu), ưu tiên ranh giới dấu câu rồi khoảng trắng. Áp dụng cả TXT, SRT và nghe thử với chỉnh hiện tại; giữ thông số Nâng cao, tốc độ và khoảng nghỉ bạn đặt. GPU vẫn có thể xử lý nhiều đoạn trong một batch. Các chế độ cũ và tác vụ đã lưu không đổi. Đây là lựa chọn thử nghiệm, không bảo đảm hết lỗi phát âm; chia ngắn có thể làm nhịp đọc vụn và tăng chi phí xử lý. Giới hạn này áp dụng cho văn bản trước khi SDK chuẩn hóa số/ký hiệu, không phải số token/âm vị của mô hình.
