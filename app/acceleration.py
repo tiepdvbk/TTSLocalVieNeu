@@ -261,7 +261,7 @@ class Manager:
                     yield group,result,elapsed
 
 def accelerated_job(runner,jid,settings,chunks,cache):
-    from .core import valid_chunk
+    from .core import valid_chunk, spoken_text
     if not hasattr(runner.engine,'manager') or runner.engine.manager is None:
         runner.engine.manager=Manager()
     # Sequential engine is not needed while process workers are active.
@@ -269,7 +269,7 @@ def accelerated_job(runner,jid,settings,chunks,cache):
         runner.engine.tts.close()
         runner.engine.tts=None
     manager=runner.engine.manager
-    pending=[(c['idx'],c['text'],cache/f'{c["idx"]:06d}.wav') for c in chunks
+    pending=[(c['idx'],spoken_text(c,settings),cache/f'{c["idx"]:06d}.wav') for c in chunks
              if not (c['status']=='DONE' and valid_chunk(c))]
     if not pending:
         return

@@ -2,6 +2,22 @@
 
 Ứng dụng Windows đọc truyện tiếng Việt offline, dùng **VieNeu 3.8.3 / v3 Turbo**, 25 giọng có sẵn và clone giọng cá nhân, CPU hoặc NVIDIA GPU. Hỗ trợ TXT / SRT, hàng đợi, tạm dừng / tiếp tục, WAV / MP3 / FLAC / M4A và phụ đề SRT xuất kèm.
 
+## Cập nhật 08/10/2026 — clone giọng chất lượng cao
+
+- Kiểm tra upstream 08/10/2026: GitHub VieNeu-TTS vẫn ở `85344322` (30/09/2026, SDK 3.8.3) — đúng bản đang ghim; nhánh còn lại chỉ sửa API server. Model giữ revision đã ghim trong `model-revisions.json`.
+- **Tự tìm đoạn mẫu tốt nhất**: quét tối đa 10 phút bản thu, chọn đoạn 5–8 giây nói liền mạch, bắt đầu và kết thúc ở chỗ nghỉ tự nhiên, không vỡ tiếng. v3 Turbo sinh tiếp ngay sau mã âm thanh của mẫu, nên mẫu cắt giữa chữ là nguyên nhân chính làm đầu / cuối câu bị cụt.
+- **Ghép đặc trưng giọng từ 3 đoạn** (trung bình vector người nói đã chuẩn hóa) để chất giọng ổn định, ít trôi giọng; mã ngữ điệu vẫn lấy từ đoạn tốt nhất.
+- **Chế độ clone “Cảm xúc & chuẩn”** (mặc định): Temperature 0.85 / Top K 30 / Top P 0.95 / chống lặp 1.15, đoạn ≤ 160 ký tự, mỗi đoạn sinh nhiều bản và giữ bản tốt nhất.
+- **Chọn bản tốt nhất** (mọi giọng): chấm điểm bằng độ giống giọng mẫu (speaker encoder của VieNeu), tốc độ đọc so với các đoạn khác (phát hiện đọc sót / lặp), khoảng lặng bất thường, đuôi cụt, vỡ tiếng. *Tự động* chỉ sinh lại đoạn có dấu hiệu lỗi; *Luôn sinh nhiều bản* chất lượng cao nhất.
+- **Giữ rõ cuối câu**: làm mềm đuôi bị cắt và nâng chữ cuối quá nhỏ (tối đa +6 dB, chỉ khi nhỏ hơn ~10 dB so với phần còn lại). Đoạn bị chia giữa câu được gửi kèm dấu phẩy để giữ ngữ điệu nối thay vì hạ giọng kết câu.
+- Tab **Audio Đã Tạo** (trước là Lịch sử) hiện giọng, tốc độ, ngắt nghỉ, âm lượng, thời lượng, ngày tạo. **Các đoạn / tạo lại**: nghe từng đoạn, đánh dấu ⚠ đoạn có tốc độ đọc lạ, tạo lại đoạn đã chọn.
+- **Xóa giọng có sẵn khỏi danh sách** (ẩn, khôi phục được), **từ điển phát âm** (`data/pronunciations.txt`), **xem văn bản sẽ đọc** sau chuẩn hóa, **thời gian còn lại** cho bài và cả hàng đợi.
+- Sửa lỗi: dọn cache không còn làm hỏng xuất lại (nút bị tắt kèm giải thích); file sai mã hóa được báo thay vì đọc chữ lỗi; cao độ dùng `rubberband` giữ formant khi FFmpeg hỗ trợ; luồng CPU áp dụng đúng số đã chọn; không cắt câu sau chữ viết tắt (TP., TS.…).
+- Hiệu năng: kiểm tra cache theo header thay vì băm lại mọi đoạn; SRT giữ mốc không gọi FFmpeg cho từng mục khi không đổi tốc độ / cao độ, cân độ lớn một lần cho cả file; bảng tác vụ không nạp lại toàn văn bản mỗi giây.
+- Mã nguồn: tách `app/workers.py`, `app/dialogs.py`, `app/testmodes.py`, `tools/clone_quality.py`; gộp hướng dẫn vào `HUONG_DAN.html`; `tools/clean_project.ps1` dọn `.fresh-test` (thêm `-OldBackups` để dọn bản EXE cũ trong `backups`).
+
+Tác vụ đã thêm trước bản này giữ nguyên cách tạo cũ khi tiếp tục. Giọng clone cũ vẫn dùng được; tạo lại từ bản thu gốc với “Tự tìm đoạn mẫu tốt nhất” để hưởng cải tiến.
+
 ## Clone giọng, nhịp nghỉ và phụ đề
 
 Clone có ba chế độ: **Rõ và ổn định** (mặc định cho tác vụ mới, Temperature 0.70, Top P 0.90, đoạn tối đa 180 ký tự), **Tự nhiên theo mẫu** (0.80 / 0.95 / 220 ký tự) và **Tự chỉnh nâng cao**. Hai preset dùng Top K 25, chống lặp 1.20; các giá trị được chốt khi thêm tác vụ. Đây là thiết lập để thử so sánh, không bảo đảm mọi từ đều đúng hoặc mọi giọng đều hay hơn. Tác vụ cũ giữ thiết lập cũ khi tiếp tục.
@@ -46,7 +62,7 @@ BUILD.bat -NoPause
 
 ## Giọng kể truyện và nghe mẫu
 
-- 25 giọng có sẵn. 10 giọng mang nhãn kể / đọc truyện của upstream được xếp đầu và đánh dấu ★, gồm Thiện Minh, Thiền Tâm Đức, Thái Sơn, Thanh Bình, Ngọc Linh, Thục Đoan, Mỹ Duyên, Quỳnh Anh, Đức Trí, Kim Thanh.
+- 25 giọng có sẵn. 10 giọng mang nhãn kể / đọc truyện của upstream được đánh dấu ★ (danh sách chia hai nhóm Cá nhân và VieNeu, mỗi nhóm xếp A→Z), gồm Thiện Minh, Thiền Tâm Đức, Thái Sơn, Thanh Bình, Ngọc Linh, Thục Đoan, Mỹ Duyên, Quỳnh Anh, Đức Trí, Kim Thanh.
 - So với bộ 23 giọng: thêm **Adam bựa, Thiền Tâm Đức**; **Trúc Ly** được thay mẫu gốc. **Minh Quân / Minh Quân Pro → Hải Đăng**, **Anh Khôi → Thiện Minh**, **Mạnh Dũng → Quốc Tuấn** là đổi tên. Thiết lập giọng cũ được chuyển tên khi mở app.
 - Đổi giọng tự áp dụng tốc độ, khoảng nghỉ và âm lượng gợi ý; tự phát một đoạn truyện ngắn bằng giọng đó. Có thể tắt riêng hai lựa chọn này.
 - Thiết lập gợi ý dựa trên nhãn phong cách của upstream, không phải khẳng định “tốt nhất” cho mọi truyện. Âm lượng từng giọng được gợi ý từ phép đo mẫu truyện hướng tới −20 LUFS (90–108% ở bộ mẫu này); bộ giới hạn đỉnh giúp tránh vỡ tiếng. Đây là mức cố định theo mẫu, không phải chuẩn hóa độ lớn toàn bộ mỗi chương. Chi tiết đo nằm ở `voice-calibration.json`. Bạn có thể chỉnh cả ba thông số và lưu lại. Mở app giữ thiết lập đã lưu; đổi giọng khi bật tự áp dụng sẽ đặt lại gợi ý.

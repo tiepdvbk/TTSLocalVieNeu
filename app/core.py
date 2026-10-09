@@ -24,7 +24,7 @@ os.environ['HF_HUB_OFFLINE'] = '1'
 os.environ['HF_HUB_DISABLE_TELEMETRY'] = '1'
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 os.environ['OPENBLAS_NUM_THREADS'] = '1'
-os.environ['OMP_NUM_THREADS'] = '4'
+os.environ.setdefault('OMP_NUM_THREADS', '4')  # Engine.load sets the user's value
 DEFAULTS = dict(voice='', threads=4, chunk_size=220, speed=1.0, volume=100,
                 gap=0.25, format='wav', output_dir=str(ROOT / 'output'), same_folder=False,
                 recursive=True, preserve_tree=True, cleanup=False, temperature=0.8,
@@ -32,7 +32,9 @@ DEFAULTS = dict(voice='', threads=4, chunk_size=220, speed=1.0, volume=100,
                 accel_mode='auto', gpu_batch=2, voice_profile=True, auto_preview=True,
                 pitch=0., normalize_volume=False, trim_silence=False, use_ref_codes=True,
                 pause_custom=False, pause_comma=.18, pause_sentence=.4, pause_newline=.7,
-                export_srt=False, srt_mode='timeline', srt_max_speed=3., clone_quality='stable')
+                export_srt=False, srt_mode='timeline', srt_max_speed=3., clone_quality='expressive',
+                take_select='auto', take_count=3, tail_fix=True, hidden_voices=[])
+PRONUNCIATIONS = ROOT / 'data/pronunciations.txt'
 
 def digest(path):
     h = hashlib.sha256()
@@ -66,15 +68,27 @@ def read_text(path):
     raw = Path(path).read_bytes()
     if raw.startswith((b'\xff\xfe', b'\xfe\xff')):
         return raw.decode('utf-16')
-    for enc in ('utf-8-sig', 'cp1258'):
-        try:
-            value = raw.decode(enc)
-            if '\x00' in value:
-                raise ValueError('File chứa ký tự NUL; hãy lưu lại dưới dạng UTF-8.')
-            return value
-        except UnicodeDecodeError:
-            pass
-    raise ValueError('Không đọc được mã hóa file. Hãy lưu TXT dưới dạng UTF-8.')
+    try:
+        value = raw.decode('utf-8-sig')
+    except UnicodeDecodeError:
+        # cp1258 decodes almost any byte string, so check the result is Vietnamese.
+        value = raw.decode('cp1258', errors='replace')
+        if mojibake_ratio(value) > .02:
+            raise ValueError('File không phải UTF-8 và giải mã thử ra chữ lỗi. Hãy mở bằng Notepad, '
+                             'chọn Lưu thành… → Mã hóa UTF-8 rồi thêm lại.')
+    if '\x00' in value:
+        raise ValueError('File chứa ký tự NUL; hãy lưu lại dưới dạng UTF-8.')
+    if mojibake_ratio(value) > .02:
+        raise ValueError('Văn bản có nhiều chữ lỗi mã hóa (ví dụ “Ã”, “Æ°”). Hãy lưu lại file dưới dạng UTF-8.')
+    return value
+
+
+_MOJIBAKE = re.compile(r'Ã[\x80-\xbf¡-¿]|Ä[‘’]|Æ[°¯]|á»|áº|\ufffd')
+
+
+def mojibake_ratio(text):
+    letters = sum(c.isalpha() for c in text[:200000]) or 1
+    return len(_MOJIBAKE.findall(text[:200000])) / letters
 
 def split_text(text, limit=220):
     text = unicodedata.normalize('NFC', text).replace('\r\n', '\n').replace('\r', '\n')
@@ -89,7 +103,8 @@ def split_text(text, limit=220):
             window = para[:limit + 1]
             cut = 0
             for pattern in (r'[.!?…]["”’]?\s+', r'[;:]\s+', r',\s+', r'\s+'):
-                points = [m.end() for m in re.finditer(pattern, window) if m.end() <= limit]
+                points = [m.end() for m in re.finditer(pattern, window)
+                          if m.end() <= limit and not (pattern[1] == '.' and _abbreviation(window, m.start()))]
                 if points:
                     cut = points[-1]
                     if cut >= limit // 3:
@@ -98,6 +113,44 @@ def split_text(text, limit=220):
             result.append(para[:cut].strip())
             para = para[cut:].strip()
     return [s for s in result if s]
+
+ABBREVIATIONS = {'tp', 'ts', 'ths', 'pgs', 'gs', 'bs', 'ks', 'ls', 'st', 'q', 'p', 'tx', 'tt', 'hn',
+                 'mr', 'mrs', 'ms', 'dr', 'vs', 'v.v', 'tr', 'tk', 'ct', 'cty', 'đ', 'sđt', 'no'}
+
+
+def _abbreviation(text, dot):
+    """True when the '.' at ``dot`` ends an abbreviation (TP. HCM, TS. An, Q.1)."""
+    if text[dot] != '.':
+        return False
+    word = re.search(r'([^\s.]+(?:\.[^\s.]+)*)$', text[:dot])
+    if not word:
+        return False
+    token = word.group(1)
+    return token.casefold() in ABBREVIATIONS or (len(token) <= 2 and token.isupper())
+
+
+def load_pronunciations(path=None):
+    """Lines ``viết = đọc``; '#' comments. Longest entries apply first."""
+    path = Path(path or PRONUNCIATIONS)
+    pairs = []
+    try:
+        for line in path.read_text(encoding='utf-8-sig').splitlines():
+            line = line.split('#', 1)[0] if not line.lstrip().startswith('#') else ''
+            if '=' in line:
+                written, spoken = (part.strip() for part in line.split('=', 1))
+                if written and spoken:
+                    pairs.append([written, spoken])
+    except OSError:
+        pass
+    return sorted(pairs, key=lambda p: -len(p[0]))
+
+
+def apply_pronunciations(text, pairs):
+    for written, spoken in pairs or ():
+        pattern = r'(?<![\w])' + re.escape(written) + r'(?![\w])'
+        text = re.sub(pattern, spoken.replace('\\', '\\\\'), text, flags=re.IGNORECASE)
+    return text
+
 
 def voices():
     import vieneu
@@ -146,12 +199,27 @@ class Store:
             db.execute("UPDATE jobs SET status='PAUSED' WHERE status='RUNNING'")
             db.execute("UPDATE chunks SET status='PENDING' WHERE status='RUNNING'")
 
+    JOB_COLUMNS = 'id,name,source,source_hash,output,settings,fingerprint,status,error,created,updated'
+
     def jobs(self):
+        """Job rows without the (possibly very long) source text. Chunk totals of
+        finished jobs never change, so they are cached instead of re-aggregated
+        every UI refresh."""
+        cache = self.__dict__.setdefault('_totals', {})
         with self.connect() as db:
-            return [dict(r) for r in db.execute('''SELECT j.*, count(c.idx) total,
-                sum(CASE WHEN c.status='DONE' THEN 1 ELSE 0 END) completed,
-                coalesce(sum(c.duration),0) duration, coalesce(sum(c.elapsed),0) elapsed
-                FROM jobs j LEFT JOIN chunks c ON j.id=c.job_id GROUP BY j.id ORDER BY j.created''')]
+            rows = [dict(r) for r in db.execute(f'SELECT {self.JOB_COLUMNS} FROM jobs ORDER BY created')]
+            need = [r['id'] for r in rows if (r['id'], r['updated']) not in cache or r['status'] != 'DONE']
+            for start in range(0, len(need), 500):
+                part = need[start:start + 500]
+                for t in db.execute(f'''SELECT job_id, count(idx) total,
+                        sum(CASE WHEN status IN ('DONE','PURGED') THEN 1 ELSE 0 END) completed,
+                        coalesce(sum(duration),0) duration, coalesce(sum(elapsed),0) elapsed
+                        FROM chunks WHERE job_id IN ({','.join('?'*len(part))}) GROUP BY job_id''', part):
+                    t = dict(t)
+                    row = next(r for r in rows if r['id'] == t['job_id'])
+                    cache[(row['id'], row['updated'])] = {k: t[k] for k in ('total', 'completed', 'duration', 'elapsed')}
+        empty = dict(total=0, completed=0, duration=0, elapsed=0)
+        return [r | cache.get((r['id'], r['updated']), empty) for r in rows]
 
     def job(self, jid):
         with self.connect() as db:
@@ -177,6 +245,8 @@ class Store:
         if settings['voice'].startswith('clone:'):
             from .voice_library import load_voice
             settings['voice_data']=load_voice(settings['voice'])
+        if '_pronunciations' not in settings:
+            settings['_pronunciations']=load_pronunciations()
         plan,cues=make_plan(text,settings, is_srt or bool(source and Path(source).suffix.lower()=='.srt'))
         pieces=[p['text'] for p in plan]
         settings['_plan']=[{k:v for k,v in p.items() if k!='text'} for p in plan]
@@ -208,6 +278,54 @@ class Store:
             db.executemany('INSERT INTO chunks(job_id,idx,text) VALUES(?,?,?)', [(jid, i, s) for i, s in enumerate(pieces)])
         return jid
 
+    def purge_cache(self, jid):
+        """Delete chunk audio after export and record it, so re-export can
+        explain why it is unavailable instead of reporting a corrupt cache."""
+        cache = self.root / 'cache/jobs' / jid
+        for wav in cache.glob('*.wav'):
+            wav.unlink(missing_ok=True)
+        with self.connect() as db:
+            db.execute("UPDATE chunks SET status='PURGED' WHERE job_id=?", (jid,))
+
+    def cache_available(self, jid):
+        with self.connect() as db:
+            row = db.execute("SELECT count(*) total, sum(status='PURGED') purged FROM chunks WHERE job_id=?", (jid,)).fetchone()
+        return bool(row['total']) and not row['purged']
+
+    def reset_chunks(self, jid, indexes):
+        """Queue selected chunks for regeneration; the job returns to the queue."""
+        job = self.job(jid)
+        if job['status'] == 'RUNNING':
+            raise ValueError('Hãy dừng tác vụ trước khi tạo lại đoạn.')
+        if not self.cache_available(jid):
+            raise ValueError('Cache của tác vụ đã được dọn; không thể tạo lại từng đoạn.')
+        with self.connect() as db:
+            for idx in indexes:
+                row = db.execute('SELECT path FROM chunks WHERE job_id=? AND idx=?', (jid, idx)).fetchone()
+                if row and row['path']:
+                    Path(row['path']).unlink(missing_ok=True)
+                db.execute("UPDATE chunks SET status='PENDING',path='',hash='',duration=0,elapsed=0 WHERE job_id=? AND idx=?", (jid, idx))
+            db.execute("UPDATE jobs SET status='PAUSED',error='',updated=? WHERE id=?", (time.time(), jid))
+
+    def progress(self, ids):
+        """Per job: done/pending characters and seconds spent, for ETA."""
+        if not ids:
+            return {}
+        marks = ','.join('?' * len(ids))
+        with self.connect() as db:
+            rows = db.execute(f'''SELECT job_id, sum(CASE WHEN status='DONE' THEN length(text) ELSE 0 END) done_chars,
+                sum(CASE WHEN status='DONE' THEN elapsed ELSE 0 END) done_seconds,
+                sum(CASE WHEN status NOT IN ('DONE','PURGED') THEN length(text) ELSE 0 END) left_chars
+                FROM chunks WHERE job_id IN ({marks}) GROUP BY job_id''', list(ids)).fetchall()
+        return {r['job_id']: dict(r) for r in rows}
+
+    def speed_hint(self):
+        """Seconds per character from recent finished work (any job)."""
+        with self.connect() as db:
+            row = db.execute('''SELECT sum(elapsed) s, sum(length(text)) c FROM (SELECT elapsed,text FROM chunks
+                WHERE status IN ('DONE','PURGED') AND elapsed>0 ORDER BY rowid DESC LIMIT 400)''').fetchone()
+        return row['s'] / row['c'] if row and row['c'] else None
+
     def remove(self, jid):
         if self.job(jid)['status'] == 'RUNNING':
             raise ValueError('Hãy dừng tác vụ trước khi xóa.')
@@ -227,6 +345,7 @@ class Engine:
         if self.tts is not None and threads == self.threads:
             return
         self.close()
+        os.environ['OMP_NUM_THREADS'] = str(max(1, min(int(threads), 64)))
         from vieneu.v3turbo import V3TurboVieNeuTTS
         self.tts = V3TurboVieNeuTTS(device='cpu', backend='onnx', precision='fp32', threads=threads)
         self.threads = threads
@@ -239,10 +358,13 @@ class Engine:
         if settings['voice'].startswith('clone:') and not settings.get('voice_data'):
             from .voice_library import load_voice
             settings=settings | dict(voice_data=load_voice(settings['voice']))
-        return self.tts.infer(text, voice=voice_argument(settings),use_ref_codes=settings.get('use_ref_codes',True),
-            max_chars=settings['chunk_size'], temperature=settings['temperature'],
-            top_k=settings['top_k'], top_p=settings['top_p'],
-            repetition_penalty=settings['repetition_penalty'], apply_watermark=False, batch_size=1)
+        from tools.runtime_support import synthesize_texts
+        args = dict(voice=voice_argument(settings), use_ref_codes=settings.get('use_ref_codes', True),
+                    max_chars=settings['chunk_size'], temperature=settings['temperature'],
+                    top_k=settings['top_k'], top_p=settings['top_p'],
+                    repetition_penalty=settings['repetition_penalty'], apply_watermark=False, batch_size=1)
+        generate = lambda texts: [self.tts.infer(t, **args) for t in texts]
+        return synthesize_texts(self.tts, [text], settings, generate, log=logging.info)[0]
 
     def close(self):
         if self.manager is not None:
@@ -252,22 +374,83 @@ class Engine:
             self.tts.close()
         self.tts = None
 
-def valid_chunk(chunk):
+def spoken_text(chunk, settings):
+    """Text sent to the model for one stored chunk (new jobs only)."""
+    if 'take_select' not in settings:
+        return chunk['text']
+    from tools.runtime_support import speakable
+    plan = settings.get('_plan') or []
+    boundary = plan[chunk['idx']]['boundary'] if chunk['idx'] < len(plan) else 'newline'
+    return speakable(chunk['text'], boundary)
+
+
+def valid_chunk(chunk, deep=False):
+    """Header + length check by default (cheap for books with thousands of
+    chunks); ``deep`` also re-hashes the file."""
     import soundfile as sf
     try:
         info = sf.info(chunk['path'])
-        return info.frames > 0 and info.samplerate == 48000 and info.channels == 1 and digest(chunk['path']) == chunk['hash']
+        ok = info.frames > 0 and info.samplerate == 48000 and info.channels == 1
+        if ok and chunk.get('duration'):
+            ok = abs(info.frames - chunk['duration'] * 48000) <= 2
+        return ok and (not deep or digest(chunk['path']) == chunk['hash'])
     except Exception:
         return False
+
+FFMPEG = ROOT / 'tools/ffmpeg.exe'
+_FILTERS = {}
+
+
+def ffmpeg_has(name):
+    """Cached probe of the bundled FFmpeg filter list (e.g. rubberband)."""
+    if name not in _FILTERS:
+        try:
+            out = subprocess.run([str(FFMPEG), '-hide_banner', '-filters'], capture_output=True, timeout=20,
+                                 creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)).stdout.decode('utf-8', 'replace')
+            _FILTERS[name] = re.search(r'\s' + re.escape(name) + r'\s', out) is not None
+        except (OSError, subprocess.SubprocessError):
+            _FILTERS[name] = False
+    return _FILTERS[name]
+
+
+def soft_limit(wav, ceiling=.98):
+    """Peak limiter with 5 ms attack / 50 ms release; numpy only."""
+    import numpy as np
+    wav = np.asarray(wav, dtype=np.float32)
+    peak = float(np.max(np.abs(wav))) if len(wav) else 0.
+    if peak <= ceiling:
+        return wav
+    block = 240
+    n = -(-len(wav) // block)
+    env = np.pad(np.abs(wav), (0, n * block - len(wav))).reshape(n, block).max(axis=1)
+    gain = np.minimum(1., ceiling / np.maximum(env, 1e-9))
+    gain = np.minimum(gain, np.concatenate([gain[1:], gain[-1:]]))   # look ahead one block
+    for i in range(1, n):                                            # release
+        gain[i] = min(gain[i], gain[i - 1] + (1 - gain[i - 1]) * .1)
+    curve = np.repeat(gain, block)[:len(wav)]
+    return np.clip(wav * curve, -ceiling, ceiling).astype(np.float32)
+
 
 def render_audio(raw, target, settings):
     """Identical tempo, volume and peak protection for previews and exports."""
     s = settings
-    ffmpeg = ROOT / 'tools/ffmpeg.exe'
+    ffmpeg = FFMPEG
+    if (s.get('speed', 1) == 1 and not s.get('pitch', 0) and not s.get('normalize_volume')
+            and Path(target).suffix == '.wav'):
+        # No tempo/pitch/loudness work: skip the FFmpeg process (SRT timelines
+        # call this once per cue).
+        import soundfile as sf
+        wav, _ = sf.read(str(raw), dtype='float32')
+        sf.write(str(target), soft_limit(wav * (s['volume'] / 100)), 48000, subtype='PCM_16')
+        return
     pitch=2**(s.get('pitch',0)/12)
     tempo=s['speed']/pitch
     filters=[]
-    if pitch!=1: filters.extend([f'asetrate={48000*pitch}', 'aresample=48000'])
+    if pitch!=1 and ffmpeg_has('rubberband'):
+        # Formant-preserving pitch shift; tempo handled separately below.
+        filters.append(f'rubberband=pitch={pitch:.6f}:formant=preserved')
+        tempo=s['speed']
+    elif pitch!=1: filters.extend([f'asetrate={48000*pitch}', 'aresample=48000'])
     while tempo>2: filters.append('atempo=2'); tempo/=2
     while tempo<.5: filters.append('atempo=0.5'); tempo/=.5
     filters.append(f'atempo={tempo}')
@@ -295,6 +478,9 @@ def export_audio(store, jid, settings=None):
     for key in ('_plan','_srt_cues'):
         if key in original_settings: s[key]=original_settings[key]
     chunks = store.chunks(jid)
+    if chunks and any(c['status'] == 'PURGED' for c in chunks):
+        raise ValueError('Cache của tác vụ này đã được xóa do bật “Xóa cache khi hoàn tất”. '
+                         'Muốn xuất lại tốc độ / âm lượng, hãy thêm lại bài và tắt lựa chọn đó.')
     if not chunks or any(c['status'] != 'DONE' or not valid_chunk(c) for c in chunks):
         raise ValueError('Cache thiếu hoặc hỏng; hãy chọn Tiếp tục / Thử lại để tạo lại đoạn thiếu.')
     cache = store.root / 'cache/jobs' / jid
@@ -398,8 +584,7 @@ class Runner:
             self.store.status(jid,'DONE')
             self.event('log','Hoàn tất: '+str(output))
             if s['cleanup']:
-                for wav in cache.glob('*.wav'):
-                    wav.unlink()
+                self.store.purge_cache(jid)
             return
         for chunk in chunks:
             if self.pause.is_set() or self.stop.is_set():
@@ -415,7 +600,7 @@ class Runner:
                     with self.store.connect() as db:
                         db.execute("UPDATE chunks SET status='RUNNING',attempts=attempts+1 WHERE job_id=? AND idx=?", (jid, chunk['idx']))
                     started = time.perf_counter()
-                    wav = np.asarray(self.engine.synthesize(chunk['text'], s), dtype=np.float32).reshape(-1)
+                    wav = np.asarray(self.engine.synthesize(spoken_text(chunk, s), s), dtype=np.float32).reshape(-1)
                     if wav.size < 4800 or not np.isfinite(wav).all() or np.max(np.abs(wav)) < 1e-6:
                         raise RuntimeError('Model trả về audio rỗng, quá ngắn hoặc không hợp lệ.')
                     tmp = output.with_suffix('.wav.tmp')
@@ -444,5 +629,4 @@ class Runner:
         self.store.status(jid, 'DONE')
         self.event('log', 'Hoàn tất: ' + str(output))
         if s['cleanup']:
-            for wav in cache.glob('*.wav'):
-                wav.unlink()
+            self.store.purge_cache(jid)

@@ -18,7 +18,7 @@ protocol = sys.stdout
 sys.stdout = sys.stderr  # keep library messages out of the protocol
 import numpy as np
 import soundfile as sf
-from runtime_support import gpu_synth, instrument_gpu, voice_argument, synthesis_settings
+from runtime_support import gpu_synth, instrument_gpu, voice_argument, synthesis_settings, synthesize_texts
 if os.environ.get('TTS_PARENT_PID'):
     import threading
     import psutil
@@ -41,8 +41,10 @@ def synth(tts, texts, s, device):
                 repetition_penalty=s['repetition_penalty'], apply_watermark=False)
     if device == 'gpu':
         import torch
-        return gpu_synth(tts, texts, args, torch)
-    return [tts.infer(text, batch_size=1, **args) for text in texts]
+        generate = lambda batch: gpu_synth(tts, batch, args, torch)
+    else:
+        generate = lambda batch: [tts.infer(text, batch_size=1, **args) for text in batch]
+    return synthesize_texts(tts, texts, s, generate, log=lambda text: print(text, flush=True))
 
 tts = None
 for line in sys.stdin:

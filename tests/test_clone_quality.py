@@ -31,7 +31,10 @@ def test_signal_feedback_and_silence_rejection():
 
 def test_profile_applies_only_to_new_clone_settings():
     user=DEFAULTS|dict(voice='clone:'+'a'*32,temperature=1.,chunk_size=300)
-    stable=synthesis_settings(user)
+    expressive=synthesis_settings(user)
+    assert DEFAULTS['clone_quality']=='expressive'
+    assert expressive['temperature']==.85 and expressive['chunk_size']==160 and expressive['take_select']=='best'
+    stable=synthesis_settings(user|dict(clone_quality='stable'))
     assert stable['temperature']==.7 and stable['chunk_size']==180
     assert synthesis_settings(user|dict(clone_quality='natural'))['temperature']==.8
     assert synthesis_settings(user|dict(clone_quality='manual'))['temperature']==1.
@@ -57,7 +60,7 @@ def test_enrollment_keeps_raw_and_prepared_samples(tmp_path,monkeypatch):
     assert v.voice_file(key).with_suffix('.prepared.wav').exists()
     store=Store(tmp_path)
     jid=store.add('Một câu kiểm tra.', 'sample',DEFAULTS|dict(voice=key,temperature=1.))
-    assert json.loads(store.job(jid)['settings'])['temperature']==.7
+    assert json.loads(store.job(jid)['settings'])['temperature']==.85
 
 
 def test_delete_only_selected_private_voice_and_preserve_job_snapshot(tmp_path,monkeypatch):

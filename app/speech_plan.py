@@ -37,7 +37,8 @@ def format_srt(cues):
 
 
 def plan_text(text, settings):
-    from .core import split_text
+    from .core import split_text, apply_pronunciations
+    text=apply_pronunciations(text, settings.get('_pronunciations'))
     result=[]
     for paragraph in re.split(r'\n+', text.replace('\r\n','\n').replace('\r','\n')):
         if not paragraph.strip(): continue
@@ -73,3 +74,23 @@ def pause_after(boundary, settings):
     if settings.get('pause_custom'):
         return settings.get('pause_'+boundary, settings.get('gap',.25))
     return settings.get('gap',.25)
+
+
+def reading_preview(text, settings, is_srt=False, limit=400):
+    """What the model will actually read: app chunk plan, pronunciation
+    dictionary, then the SDK's own number/symbol normalisation."""
+    from .core import load_pronunciations
+    from tools.runtime_support import synthesis_settings, speakable
+    s=synthesis_settings(settings)
+    s.setdefault('_pronunciations', load_pronunciations())
+    plan,_=make_plan(text,s,is_srt)
+    try:
+        from vieneu_utils.phonemize_text import normalize_to_chunks_v3_with_gaps as sdk_chunks
+    except Exception:
+        sdk_chunks=None
+    rows=[]
+    for i,piece in enumerate(plan[:limit]):
+        spoken=speakable(piece['text'],piece['boundary']) if 'take_select' in s else piece['text']
+        normalized=' | '.join(sdk_chunks(spoken,max_chars=s['chunk_size'])[0]) if sdk_chunks else spoken
+        rows.append(dict(index=i+1,text=piece['text'],normalized=normalized,boundary=piece['boundary']))
+    return rows,len(plan)

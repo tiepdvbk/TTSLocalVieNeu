@@ -25,6 +25,10 @@ def run():
         key=voice_library.create_voice(engine,'Synthetic release test',source,seconds=6,denoise=True)
         profile=json.loads(voice_library.voice_file(key).read_text(encoding='utf-8'))
         assert profile['prepared'] and profile['quality']['active_seconds']>=1.5
+        auto=voice_library.create_voice(engine,'Synthetic auto test',source,denoise=True,auto=True,multi=True)
+        auto_profile=json.loads(voice_library.voice_file(auto).read_text(encoding='utf-8'))
+        assert auto_profile['segments'] and auto_profile['references']>=1
+        assert len(auto_profile['voice']['reference_emb'])==len(auto_profile['voice']['speaker_emb'])
         settings=DEFAULTS | dict(voice=key,threads=4,accel_mode='cpu',output_dir=str(folder/'audio'),
             same_folder=False,export_srt=True,srt_mode='timeline',pitch=1.,normalize_volume=True)
         store=Store(folder)
@@ -38,14 +42,14 @@ def run():
         assert abs(sf.info(output).duration-25)<.001
         assert parse_srt(output.with_suffix('.srt').read_text(encoding='utf-8-sig'))==parse_srt(text)
         payload=json.loads(job['settings'])
-        assert payload['temperature']==.7 and payload['chunk_size']<=180
+        assert payload['temperature']==.85 and payload['chunk_size']<=160 and payload['take_select']=='best'
         gpu=ProcessEngine('gpu',4)
         target=folder/'gpu-clone.wav'
         gpu.generate(['Câu chuyện bắt đầu dưới ánh trăng.'],[target],payload)
         wav,sr=sf.read(target)
         assert sr==48000 and len(wav)>4800 and np.isfinite(wav).all() and np.max(np.abs(wav))>.001
         result=dict(success=True,cpu_timeline_seconds=sf.info(output).duration,gpu_clone_seconds=len(wav)/sr,
-                    denoise=True,voice_shape=list(np.asarray(payload['voice_data']['codes']).shape),folder=str(folder))
+                    denoise=True,auto_segments=auto_profile['segments'],voice_shape=list(np.asarray(payload['voice_data']['codes']).shape),folder=str(folder))
         (ROOT/'logs/features-result.json').write_text(json.dumps(result,indent=2),encoding='utf-8')
     finally:
         if gpu: gpu.close()

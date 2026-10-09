@@ -4,7 +4,7 @@ from PyInstaller.utils.hooks import collect_all
 
 datas = []
 binaries = []
-hiddenimports = ['vieneu.v3turbo', 'vieneu._v3_turbo_engine.onnx_runtime_lite', 'vieneu._v3_turbo_engine.onnx_denoiser', 'vieneu._v3_turbo_engine.rep_history', 'soundfile', 'soxr']
+hiddenimports = ['vieneu.v3turbo', 'vieneu._v3_turbo_engine.onnx_runtime_lite', 'vieneu._v3_turbo_engine.onnx_denoiser', 'vieneu._v3_turbo_engine.rep_history', 'soundfile', 'soxr', 'tools.clone_quality', 'app.testmodes', 'app.dialogs', 'app.workers', 'vieneu_utils.phonemize_text']
 datas += collect_data_files('vieneu')
 datas += collect_data_files('vieneu_utils')
 tmp_ret = collect_all('sea_g2p')

@@ -1,4 +1,5 @@
 import os
+import threading
 os.environ['QT_QPA_PLATFORM'] = 'offscreen'
 from PySide6.QtWidgets import QApplication
 from PySide6.QtTest import QTest
@@ -31,6 +32,55 @@ def test_delete_saved_clone_from_ui(tmp_path,monkeypatch):
     finally:w.close()
 
 
+def test_delete_clone_releases_locked_preview_and_survives_stuck_file(tmp_path,monkeypatch):
+    import json, pathlib
+    from types import SimpleNamespace
+    from app import voice_library as library
+    app=QApplication.instance() or QApplication([])
+    key='clone:'+'d'*32
+    monkeypatch.setattr(library,'LIBRARY_DIR',tmp_path/'voices')
+    library.LIBRARY_DIR.mkdir()
+    profile=library.voice_file(key)
+    profile.write_text(json.dumps(dict(id=key,name='Locked',voice=dict(speaker_emb=[.1]*192,codes=[[1]*16]*10))),encoding='utf-8')
+    samples=tmp_path/'voice_samples'; samples.mkdir()
+    sample=samples/(key.replace(':','_')+'_abc123.wav'); sample.write_bytes(b'x'); sample.with_suffix('.json').write_text('{}')
+    orphan=samples/('clone_'+'e'*32+'_f00.wav'); orphan.write_bytes(b'x')
+    monkeypatch.setattr(ui,'Store',lambda:Store(tmp_path))
+    monkeypatch.setattr(ui,'ROOT',tmp_path)
+    monkeypatch.setattr(ui,'load_config',lambda:DEFAULTS|dict(voice=key,auto_preview=False))
+    monkeypatch.setattr(ui.QMessageBox,'question',lambda *a,**k:ui.QMessageBox.Yes)
+    w=ui.Window()
+    real=w.player
+    try:
+        assert not orphan.exists()                      # swept on start-up
+        log=[]
+        w.player=SimpleNamespace(stop=lambda:log.append('stop'),setSource=lambda u:log.append('release'))
+        w.stop_preview()
+        assert log==['stop','release']                  # file handle released, not just paused
+        # the media backend still holds the file for the first two attempts
+        original=pathlib.Path.unlink; attempts=[]
+        def locked(self,*a,**k):
+            if self==sample and len(attempts)<2:
+                attempts.append(1); raise PermissionError(13,'used by another process')
+            return original(self,*a,**k)
+        monkeypatch.setattr(pathlib.Path,'unlink',locked)
+        w.delete_clone()
+        assert len(attempts)==2 and not sample.exists() and not profile.exists()
+        assert w.voice.findData(key)<0 and w.clone_saved.findData(key)<0
+        # permanently locked: no exception, voice is still removed from the lists
+        key2='clone:'+'f'*32
+        library.voice_file(key2).write_text(json.dumps(dict(id=key2,name='Stuck',voice=dict(speaker_emb=[.1]*192,codes=[[1]*16]*10))),encoding='utf-8')
+        stuck=samples/(key2.replace(':','_')+'_zzz.wav'); stuck.write_bytes(b'x')
+        monkeypatch.setattr(pathlib.Path,'unlink',lambda self,*a,**k:(_ for _ in ()).throw(PermissionError(13,'locked')) if self==stuck else original(self,*a,**k))
+        monkeypatch.setattr(ui.time,'sleep',lambda s:None)
+        w.refresh_saved_voices(key2); w.populate_voices(key2)
+        w.clone_saved.setCurrentIndex(w.clone_saved.findData(key2))
+        w.delete_clone()
+        assert not library.voice_file(key2).exists() and w.voice.findData(key2)<0
+    finally:
+        w.player=real; w.close()
+
+
 def test_clone_modes_and_emotion_controls(tmp_path,monkeypatch):
     app=QApplication.instance() or QApplication([])
     key='clone:'+'a'*32
@@ -40,7 +90,7 @@ def test_clone_modes_and_emotion_controls(tmp_path,monkeypatch):
     monkeypatch.setattr(ui,'load_config',lambda:DEFAULTS|dict(voice=key,auto_preview=False,voice_profile=False))
     w=ui.Window()
     try:
-        assert w.clone_quality.currentData()=='stable'
+        assert w.clone_quality.currentData()=='expressive'
         assert not w.settings_widgets['temperature'].isEnabled()
         w.clone_quality.setCurrentIndex(w.clone_quality.findData('manual'))
         assert w.settings_widgets['temperature'].isEnabled()
@@ -221,4 +271,139 @@ def test_controls_progress_history_and_theme(tmp_path, monkeypatch):
         w.refresh()
         assert w.total_progress.value() == w.file_progress.value() == 0
     finally:
+        w.close()
+
+
+def test_created_audio_tab_hidden_voices_and_chunk_reset(tmp_path, monkeypatch):
+    import json
+    app = QApplication.instance() or QApplication([])
+    monkeypatch.setattr(ui, 'Store', lambda: Store(tmp_path))
+    monkeypatch.setattr(ui, 'ROOT', tmp_path)
+    monkeypatch.setattr(ui, 'load_config', lambda: DEFAULTS | {'output_dir': str(tmp_path/'out'), 'auto_preview': False})
+    monkeypatch.setattr(ui.QMessageBox, 'question', lambda *a, **k: ui.QMessageBox.Yes)
+    w = ui.Window()
+    try:
+        assert w.tabs.tabText(2) == 'Audio Đã Tạo'
+        s = DEFAULTS | {'output_dir': str(tmp_path/'out'), 'accel_mode': 'cpu', 'voice': 'Thái Sơn', 'speed': 1.1, 'volume': 90}
+        jid = w.store.add('Câu thứ nhất. Câu thứ hai.', 'bai', s)
+        Runner(w.store, FakeEngine()).run([jid])
+        w.refresh()
+        assert w.history.rowCount() == 1
+        row = [w.history.item(0, c).text() for c in range(w.history.columnCount())]
+        assert row[0] == 'bai' and row[1] == 'Thái Sơn' and row[2] == '1.10×' and row[4] == '90%'
+        w.history.selectRow(0)
+        assert w.export_btn.isEnabled()
+        w.store.reset_chunks(jid, [0])
+        w.refresh()
+        assert w.history.rowCount() == 0 and w.queue.rowCount() == 1
+        # hide a preset voice and restore it
+        count = w.voice.count()
+        row = next(r for r in range(w.sample_table.rowCount())
+                   if not str(w.sample_table.item(r, 0).data(ui.Qt.UserRole)).startswith('clone:'))
+        w.sample_table.selectRow(row)
+        key = w.sample_table.item(row, 0).data(ui.Qt.UserRole)
+        w.hide_voice()
+        assert w.voice.count() == count - 1 and w.voice.findData(key) < 0
+        assert key in json.loads((tmp_path/'data/config.json').read_text(encoding='utf-8'))['hidden_voices']
+        w.restore_voices()
+        assert w.voice.count() == count
+        assert w.clone_auto.isChecked() and not w.clone_start.isEnabled()
+        w.clone_auto.setChecked(False)
+        assert w.clone_start.isEnabled()
+        assert w.take_select.currentData() == 'auto' and w.settings()['tail_fix']
+    finally:
+        w.close()
+
+
+def test_voice_name_cache_follows_the_profile_folder(tmp_path, monkeypatch):
+    """Personal profiles hold a 192-float speaker vector, so parsing the folder
+    once per history row stalled the window; entries() is cached but must still
+    notice a profile being added or deleted."""
+    import json
+    from app import voice_library as library
+    monkeypatch.setattr(library, 'LIBRARY_DIR', tmp_path / 'voices')
+    library.LIBRARY_DIR.mkdir()
+    reads = []
+    original = library.Path.read_text
+    def counting(self, *args, **kwargs):
+        reads.append(self.name)
+        return original(self, *args, **kwargs)
+    monkeypatch.setattr(library.Path, 'read_text', counting)
+    keys = ['clone:' + c * 32 for c in 'ab']
+    for index, key in enumerate(keys):
+        library.voice_file(key).write_text(json.dumps(dict(id=key, name=f'Giong {index}')), encoding='utf-8')
+    assert library.entries() == [(keys[0], 'Giong 0'), (keys[1], 'Giong 1')]
+    parsed = len(reads)
+    assert parsed == 2
+    assert library.display_name(keys[0]) == 'Giong 0'
+    assert library.entries() == [(keys[0], 'Giong 0'), (keys[1], 'Giong 1')]
+    assert len(reads) == parsed                       # served from the cache
+    extra = 'clone:' + 'c' * 32
+    library.voice_file(extra).write_text(json.dumps(dict(id=extra, name='Giong 2')), encoding='utf-8')
+    assert (extra, 'Giong 2') in library.entries()    # new profile, no stale cache
+    library.voice_file(keys[1]).unlink()
+    assert library.entries() == [(keys[0], 'Giong 0'), (extra, 'Giong 2')]
+
+
+def test_refresh_reuses_unchanged_rows(tmp_path, monkeypatch):
+    """The one-second heartbeat used to rebuild every row: that stole the GUI
+    thread, dropped tooltips and re-fired the selection signal while the user
+    was clicking an audio file."""
+    app = QApplication.instance() or QApplication([])
+    monkeypatch.setattr(ui, 'Store', lambda: Store(tmp_path))
+    monkeypatch.setattr(ui, 'ROOT', tmp_path)
+    monkeypatch.setattr(ui, 'load_config', lambda: DEFAULTS | {'output_dir': str(tmp_path/'out'), 'auto_preview': False})
+    w = ui.Window()
+    try:
+        settings = DEFAULTS | {'output_dir': str(tmp_path/'out'), 'accel_mode': 'cpu'}
+        jid = w.store.add('Câu thứ nhất. Câu thứ hai.', 'bai', settings)
+        w.refresh()
+        assert w.queue.rowCount() == 1
+        first = w.queue.item(0, 0)
+        assert first.data(ui.Qt.UserRole) == jid
+        w.refresh()
+        assert w.queue.item(0, 0) is first            # identical data: not rebuilt
+        with w.store.connect() as db:
+            db.execute("UPDATE jobs SET status='DONE',updated=updated+1 WHERE id=?", (jid,))
+            db.execute("UPDATE chunks SET status='DONE',duration=3.5 WHERE job_id=?", (jid,))
+        w.refresh()
+        assert w.queue.rowCount() == 0
+        assert w.history.rowCount() == 1
+        values = [w.history.item(0, c).text() for c in range(w.history.columnCount())]
+        assert w.history.item(0, 0) is not first      # changed data: rebuilt
+        assert values[0] == 'bai' and values[5] == '0:04'
+    finally:
+        w.close()
+
+
+def test_open_path_does_not_wait_for_the_shell(tmp_path, monkeypatch):
+    """ShellExecute waits for the default app (Windows Media Player answers over
+    DDE), so the click that played a finished export froze the window."""
+    app = QApplication.instance() or QApplication([])
+    monkeypatch.setattr(ui, 'Store', lambda: Store(tmp_path))
+    monkeypatch.setattr(ui, 'ROOT', tmp_path)
+    monkeypatch.setattr(ui, 'load_config', lambda: DEFAULTS | {'output_dir': str(tmp_path/'out'), 'auto_preview': False})
+    w = ui.Window()
+    started, release, finished, opened = threading.Event(), threading.Event(), threading.Event(), []
+    def slow_shell(path):
+        opened.append(path); started.set(); release.wait(5); finished.set()
+    monkeypatch.setattr(ui.os, 'startfile', slow_shell, raising=False)
+    warnings = []
+    monkeypatch.setattr(ui.QMessageBox, 'warning', lambda *a, **k: warnings.append(a))
+    try:
+        target = tmp_path / 'out'
+        target.mkdir()
+        w.open_path(target)
+        assert started.wait(2)                        # the shell call did run ...
+        assert not finished.is_set()                  # ... while open_path had already returned
+        release.set()
+        for _ in range(200):
+            if finished.is_set():
+                break
+            QTest.qWait(10)
+        assert opened == [str(target)]
+        w.open_path(tmp_path / 'missing.wav')
+        assert warnings and 'Không tìm thấy' in warnings[-1][2]
+    finally:
+        release.set()
         w.close()

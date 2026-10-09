@@ -3,6 +3,21 @@ import gc
 import time
 
 
+try:
+    from .clone_quality import select_takes
+except ImportError:          # worker process: tools/ itself is on sys.path
+    from clone_quality import select_takes
+
+# temperature, top_k, top_p, repetition penalty, max chunk chars
+CLONE_PRESETS = {
+    'stable': (.7, 25, .9, 1.2, 180),
+    'natural': (.8, 25, .95, 1.2, 220),
+    # Expressive sampling made safe by take selection: several candidates are
+    # scored (speaker similarity, speaking rate, tail) and the best one is kept.
+    'expressive': (.85, 30, .95, 1.15, 160),
+}
+
+
 def synthesis_settings(settings):
     """Opt-in presets are snapshotted in new jobs; legacy jobs stay unchanged."""
     s=settings.copy()
@@ -10,11 +25,59 @@ def synthesis_settings(settings):
         mode=s.get('clone_quality','manual')
         if mode == 'short80':
             s['chunk_size']=min(s['chunk_size'],79)
-        if mode in ('stable','natural'):
-            s.update(temperature=.7 if mode=='stable' else .8,top_k=25,
-                     top_p=.9 if mode=='stable' else .95,repetition_penalty=1.2)
-            s['chunk_size']=min(s['chunk_size'],180 if mode=='stable' else 220)
+        if mode in CLONE_PRESETS:
+            temperature,top_k,top_p,penalty,chars=CLONE_PRESETS[mode]
+            s.update(temperature=temperature,top_k=top_k,top_p=top_p,repetition_penalty=penalty)
+            s['chunk_size']=min(s['chunk_size'],chars)
+            if mode == 'expressive' and s.get('take_select','auto')=='auto':
+                s['take_select']='best'
     return s
+
+
+def reference_embedding(tts, settings):
+    """Target speaker vector used to score takes (clone or preset)."""
+    import numpy as np
+    data=settings.get('voice_data')
+    if data and data.get('reference_emb') is not None:
+        return np.asarray(data['reference_emb'],dtype=np.float32)
+    try:
+        return tts._resolve_ref(voice_argument(settings),None,False,False)[0]
+    except Exception:
+        return None
+
+
+def speaker_embedder(tts):
+    engine=getattr(tts,'engine',None)
+    try:
+        encoder=engine._ensure_speaker_encoder() if hasattr(engine,'_ensure_speaker_encoder') else getattr(engine,'speaker_encoder',None)
+    except Exception:
+        encoder=None
+    return (lambda wav: encoder.embed(wav,48000)) if encoder is not None else None
+
+
+_END = tuple('.,;:!?…"”’)»]')
+
+
+def speakable(text, boundary='chunk'):
+    """A chunk cut mid-sentence (plan boundary 'chunk') gets a comma so the
+    model keeps a continuing intonation instead of the SDK's added full stop,
+    which made the cut sound like a clipped sentence end."""
+    stripped=text.rstrip()
+    if boundary!='chunk' or not stripped or stripped.endswith(_END):
+        return stripped
+    return stripped+','
+
+
+def synthesize_texts(tts, texts, settings, generate, log=None):
+    """Run ``generate`` (texts -> wavs) through take selection + tail repair.
+    Jobs created before this feature have no ``take_select`` key: unchanged."""
+    if 'take_select' not in settings:
+        return generate(texts)
+    mode=settings.get('take_select','auto')
+    embed=speaker_embedder(tts) if mode!='off' else None
+    reference=reference_embedding(tts,settings) if embed else None
+    return select_takes(texts,generate,mode,settings.get('take_count',3),embed,reference,
+                        settings.get('tail_fix',True),log=log)
 
 
 def voice_argument(settings):

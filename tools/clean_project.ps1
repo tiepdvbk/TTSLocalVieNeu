@@ -1,4 +1,4 @@
-param([switch]$BuildArtifacts)
+param([switch]$BuildArtifacts, [switch]$OldBackups)
 $ErrorActionPreference = 'Stop'
 $ttsRoot = [IO.Path]::GetFullPath((Split-Path $PSScriptRoot -Parent)).TrimEnd('\')
 $ttsRemoved = @()
@@ -36,6 +36,16 @@ foreach ($ttsLog in Get-ChildItem -LiteralPath (Join-Path $ttsRoot 'logs') -Forc
     }
     if ($ttsLog.LastWriteTime -lt $ttsCutoff -or $ttsDatedRun) {
         Remove-TtsGenerated $ttsLog.FullName
+    }
+}
+# .fresh-test is a disposable copy made by release checks (gitignored).
+Remove-TtsGenerated (Join-Path $ttsRoot '.fresh-test')
+if ($OldBackups) {
+    # Dated EXE/app snapshots made before upgrades. Keeps 'before-*' folders,
+    # which may hold an older app.db the user wants to keep.
+    $ttsBackups = Join-Path $ttsRoot 'backups'
+    if (Test-Path -LiteralPath $ttsBackups) {
+        foreach ($ttsOld in Get-ChildItem -LiteralPath $ttsBackups -Directory | Where-Object { $_.Name -match '^\d{8}-\d{6}$' }) { Remove-TtsGenerated $ttsOld.FullName }
     }
 }
 foreach ($ttsCache in @('__pycache__','.pytest_cache','app\__pycache__','tests\__pycache__','tools\__pycache__')) {

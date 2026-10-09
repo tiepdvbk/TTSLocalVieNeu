@@ -39,6 +39,10 @@ def build_audio(chunks, settings, cache, render):
                 silence(dest,round(RATE*pause_after(plan[i]['boundary'],settings)))
         return spans
     if cues and settings.get('srt_mode')=='timeline':
+        # Loudness is normalised once over the whole timeline (below), not per
+        # cue, so neighbouring lines keep a consistent level.
+        normalize=settings.get('normalize_volume')
+        settings=dict(settings,normalize_volume=False)
         groups={}
         for i,p in enumerate(plan): groups.setdefault(p.get('cue'),[]).append(i)
         if any(b['start']<a['end'] for a,b in zip(cues,cues[1:])):
@@ -69,6 +73,10 @@ def build_audio(chunks, settings, cache, render):
                 copy_chunk(dest,fitted)
                 silence(dest,max(0,round(cue['end']*RATE)-dest.tell()))
                 captions.append(cue)
+        if normalize:
+            leveled=cache/'timeline-norm.wav'
+            render(processed,leveled,dict(speed=1.,volume=100,normalize_volume=True))
+            leveled.replace(processed)
     else:
         with sf.SoundFile(raw,'w',samplerate=RATE,channels=1,subtype='PCM_16') as dest:
             captions=merge(dest,list(range(len(chunks))))

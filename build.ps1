@@ -54,8 +54,8 @@ if ($Portable) {
         if (Test-Path -LiteralPath $ttsDir) { Copy-Item -LiteralPath $ttsDir -Destination $ttsPortable -Recurse -Force }
     }
     New-Item -ItemType Directory -Path (Join-Path $ttsPortable 'tools') -Force | Out-Null
-    Copy-Item -LiteralPath 'tools\engine_worker.py','tools\runtime_support.py','tools\ffmpeg.exe' -Destination (Join-Path $ttsPortable 'tools') -Force
-    foreach ($ttsFile in @('HUONG_DAN.html','HUONG_DAN_V2.html','README.md','THIRD_PARTY_NOTICES.txt','vendor-revision.txt','model-revisions.json','voice-calibration.json','UPGRADE_NOTES.md')) {
+    Copy-Item -LiteralPath 'tools\engine_worker.py','tools\runtime_support.py','tools\clone_quality.py','tools\ffmpeg.exe' -Destination (Join-Path $ttsPortable 'tools') -Force
+    foreach ($ttsFile in @('HUONG_DAN.html','README.md','THIRD_PARTY_NOTICES.txt','vendor-revision.txt','model-revisions.json','voice-calibration.json','UPGRADE_NOTES.md')) {
         if (Test-Path -LiteralPath $ttsFile) { Copy-Item -LiteralPath $ttsFile -Destination $ttsPortable -Force }
     }
     foreach ($ttsName in @('data','cache','logs','output')) {
